@@ -77,7 +77,7 @@ function handleNexusUrl(url) {
 
 app.whenReady().then(async () => {
   // Open database & run migrations
-  openDatabase();
+  await openDatabase();
 
   // Seed duplicate detector from completed downloads
   const q = getStatements();
