@@ -5,19 +5,26 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { Server: SocketIO } = require('socket.io');
-const { v4: uuidv4 } = require('uuid');
 
 const downloadManager = require('./engine/downloadManager');
+const ytdlpEngine = require('./engine/ytdlpEngine');
 const { getStatements } = require('./db/queries');
 const networkUtils = require('./utils/networkUtils');
 const logger = require('./utils/logger');
+const nameCleaner = require('./ai/nameCleaner');
+const categorizer = require('./ai/categorizer');
 
-const PORT = process.env.NEXUS_PORT || 6543;
-const ALLOWED_ORIGIN = `http://localhost:${PORT}`;
+const PORTS_TO_TRY = [6543, 6544, 6545];
+const VERSION = process.env.npm_package_version || '1.0.0';
+// Rough estimate for playlist size: 5 MB per minute at 720p
+const ESTIMATED_BYTES_PER_SECOND = (5 * 1024 * 1024) / 60;
 
 let httpServer = null;
 let io = null;
+let activePort = null;
 
 // ─── Express app ──────────────────────────────────────────────────────────────
 
@@ -35,38 +42,40 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false,
 }));
-app.use(cors({
-  origin: (origin, cb) => {
-    // Allow requests from the extension (null origin) or localhost
-    if (!origin || origin.startsWith('chrome-extension://') || origin === ALLOWED_ORIGIN) {
-      cb(null, true);
-    } else {
-      cb(new Error('CORS blocked'));
-    }
-  },
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Nexus-Key'],
-}));
+app.use(cors({ origin: '*' }));
 app.use(morgan('dev', { stream: { write: (m) => logger.debug(m.trim()) } }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// Health check
-app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));
+// ── Health ────────────────────────────────────────────────────────────────────
 
-// ── Downloads ─────────────────────────────────────────────────────────────────
+app.get('/health', (_req, res) => res.json({ status: 'ok', version: VERSION }));
+
+app.get('/api/health', (_req, res) => {
+  const allDls = downloadManager.getAll ? downloadManager.getAll() : [];
+  const activeDownloads = allDls.filter((d) => d.status === 'downloading').length;
+  res.json({
+    status: 'running',
+    version: VERSION,
+    port: activePort,
+    activeDownloads,
+    uptime: process.uptime(),
+  });
+});
+
+// ── Downloads (legacy) ────────────────────────────────────────────────────────
 
 app.get('/downloads', (_req, res) => {
   try {
-    res.json(downloadManager.getAll());
+    res.json(downloadManager.getAll ? downloadManager.getAll() : []);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get('/downloads/:id', (req, res) => {
-  const dl = downloadManager.getOne(req.params.id);
+  const dl = downloadManager.getOne ? downloadManager.getOne(req.params.id) : null;
   if (!dl) return res.status(404).json({ error: 'Not found' });
   res.json(dl);
 });
@@ -74,13 +83,12 @@ app.get('/downloads/:id', (req, res) => {
 app.post('/downloads', async (req, res) => {
   const { url, ...rest } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
-  try {
-    new URL(url); // validate
-  } catch (_) {
+  try { new URL(url); } catch (_) {
     return res.status(400).json({ error: 'Invalid URL' });
   }
   try {
-    const id = await downloadManager.addDownload({ url, ...rest });
+    const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
+    const id = await addFn({ url, ...rest });
     res.status(201).json({ id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -89,7 +97,7 @@ app.post('/downloads', async (req, res) => {
 
 app.post('/downloads/:id/pause', (req, res) => {
   try {
-    downloadManager.pauseDownload(req.params.id);
+    if (downloadManager.pauseDownload) downloadManager.pauseDownload(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -98,7 +106,7 @@ app.post('/downloads/:id/pause', (req, res) => {
 
 app.post('/downloads/:id/resume', (req, res) => {
   try {
-    downloadManager.resumeDownload(req.params.id);
+    if (downloadManager.resumeDownload) downloadManager.resumeDownload(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -107,7 +115,7 @@ app.post('/downloads/:id/resume', (req, res) => {
 
 app.post('/downloads/:id/cancel', (req, res) => {
   try {
-    downloadManager.cancelDownload(req.params.id);
+    if (downloadManager.cancelDownload) downloadManager.cancelDownload(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -117,14 +125,105 @@ app.post('/downloads/:id/cancel', (req, res) => {
 app.delete('/downloads/:id', (req, res) => {
   const deleteFile = req.query.deleteFile === 'true';
   try {
-    downloadManager.deleteDownload(req.params.id, deleteFile);
+    if (downloadManager.deleteDownload) downloadManager.deleteDownload(req.params.id, deleteFile);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Settings ──────────────────────────────────────────────────────────────────
+// ── POST /api/download – primary endpoint for Chrome extension ─────────────────
+
+app.post('/api/download', async (req, res) => {
+  const { url, filename, fileSize, mimeType, type, pageUrl, pageTitle,
+          quality, stream, allStreams } = req.body;
+
+  // 1. Validate URL
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+
+  try {
+    // 2. Determine download type
+    let resolvedType = type;
+    if (!resolvedType) {
+      if (stream) {
+        resolvedType = stream.type === 'hls' ? 'hls' : (stream.type === 'dash' ? 'dash' : 'video');
+      } else if (mimeType) {
+        if (mimeType.startsWith('video/') || mimeType.startsWith('application/x-mpegURL')) {
+          resolvedType = 'video';
+        } else if (mimeType.startsWith('audio/')) {
+          resolvedType = 'audio';
+        } else {
+          resolvedType = 'file';
+        }
+      } else {
+        const ext = path.extname(parsedUrl.pathname).toLowerCase();
+        const videoExts = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.m3u8', '.mpd'];
+        resolvedType = videoExts.includes(ext) ? 'video' : 'file';
+      }
+    }
+
+    // 3. AI Smart Naming
+    const rawName = filename || pageTitle || path.basename(parsedUrl.pathname) || 'download';
+    const cleanName = nameCleaner.cleanFromUrl
+      ? nameCleaner.cleanFromUrl(rawName, url, { quality, pageTitle })
+      : nameCleaner.clean(rawName);
+
+    // 4. AI Categorization
+    const catResult = categorizer.categorizeDetailed
+      ? categorizer.categorizeDetailed(cleanName, mimeType, url)
+      : { category: categorizer.categorize(cleanName, mimeType, url), suggestedFolder: null };
+
+    // 5. Add to download queue
+    const isVideo = resolvedType === 'video' || resolvedType === 'hls' || resolvedType === 'dash' || resolvedType === 'audio';
+    const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
+    const downloadId = await addFn({
+      url: (stream && stream.url) || url,
+      filename: cleanName,
+      fileSize: fileSize || 0,
+      mimeType: mimeType || '',
+      type: resolvedType,
+      referrer: pageUrl || '',
+      isYtdlp: isVideo,
+      quality: quality || (isVideo ? 'best' : null),
+      category: catResult.category,
+      saveDir: catResult.suggestedFolder || undefined,
+    });
+
+    res.json({ success: true, downloadId, message: 'Download queued' });
+  } catch (err) {
+    logger.error('POST /api/download failed', { err: err.message });
+    res.status(500).json({ error: _friendlyError(err) });
+  }
+});
+
+// ── GET /api/settings ─────────────────────────────────────────────────────────
+
+app.get('/api/settings', (_req, res) => {
+  try {
+    const q = getStatements();
+    const rows = q.getAllSettings.all();
+    const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    // Return only extension-relevant settings
+    const relevant = {
+      interceptSize:  settings.intercept_size || '0',
+      fileTypes:      settings.file_types || '',
+      autoStart:      settings.auto_start || '1',
+      maxConcurrent:  settings.max_concurrent || '3',
+      saveDir:        settings.save_dir || '',
+    };
+    res.json(relevant);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Settings (legacy) ─────────────────────────────────────────────────────────
 
 app.get('/settings', (_req, res) => {
   try {
@@ -144,6 +243,59 @@ app.post('/settings', (req, res) => {
     q.setSetting.run({ key, value: String(value) });
     res.json({ ok: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/playlist/info ───────────────────────────────────────────────────
+
+app.post('/api/playlist/info', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  try {
+    const info = await ytdlpEngine.getPlaylistInfo(url);
+    // Estimate total size from known durations (rough: 5 MB/min at 720p)
+    const estimatedSize = info.entries.reduce((sum, e) => sum + (e.duration || 0) * ESTIMATED_BYTES_PER_SECOND, 0);
+    res.json({
+      title: info.title,
+      count: info.count,
+      entries: info.entries,
+      estimatedSize: Math.round(estimatedSize),
+    });
+  } catch (err) {
+    logger.error('POST /api/playlist/info failed', { err: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/playlist/download ───────────────────────────────────────────────
+
+app.post('/api/playlist/download', async (req, res) => {
+  const { url, quality, title, entries } = req.body;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  try {
+    const { v4: uuidv4 } = require('uuid');
+    const playlistId = uuidv4();
+    const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
+    const list = Array.isArray(entries) && entries.length > 0 ? entries : [{ url, title }];
+    let queuedCount = 0;
+    for (const entry of list) {
+      try {
+        await addFn({
+          url: entry.url || url,
+          filename: entry.title ? nameCleaner.clean(entry.title) : undefined,
+          quality: quality || 'best',
+          isYtdlp: true,
+          playlistId,
+        });
+        queuedCount++;
+      } catch (e) {
+        logger.warn('Failed to queue playlist entry', { url: entry.url, err: e.message });
+      }
+    }
+    res.json({ success: true, queuedCount, playlistId });
+  } catch (err) {
+    logger.error('POST /api/playlist/download failed', { err: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -172,6 +324,18 @@ app.get('/stats', (_req, res) => {
   }
 });
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function _friendlyError(err) {
+  const msg = err && err.message ? err.message : String(err);
+  try {
+    const { getUserFriendlyMessage } = require('./utils/errorHandler');
+    return getUserFriendlyMessage(err);
+  } catch (_) {
+    return msg || 'An unexpected error occurred.';
+  }
+}
+
 // ─── Socket.IO ───────────────────────────────────────────────────────────────
 
 function setupSocketIO(server) {
@@ -186,7 +350,7 @@ function setupSocketIO(server) {
     logger.debug('Socket.IO client connected', { id: socket.id });
 
     // Send current downloads on connect
-    socket.emit('downloads:init', downloadManager.getAll());
+    socket.emit('downloads:init', downloadManager.getAll ? downloadManager.getAll() : []);
 
     socket.on('disconnect', () => {
       logger.debug('Socket.IO client disconnected', { id: socket.id });
@@ -201,28 +365,58 @@ function setupSocketIO(server) {
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
-function start() {
-  httpServer = http.createServer(app);
-  setupSocketIO(httpServer);
+function _savePort(port) {
+  try {
+    const { app: electronApp } = require('electron');
+    const portFile = path.join(electronApp.getPath('userData'), 'port.txt');
+    fs.writeFileSync(portFile, String(port), 'utf8');
+  } catch (_) {}
+}
 
-  httpServer.listen(PORT, '127.0.0.1', () => {
-    logger.info(`Nexus API server listening on http://127.0.0.1:${PORT}`);
+function _tryListen(server, port) {
+  return new Promise((resolve, reject) => {
+    server.listen(port, '127.0.0.1', () => resolve(port));
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') reject(err);
+      else reject(err);
+    });
   });
+}
 
-  httpServer.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      logger.warn(`Port ${PORT} in use – Nexus server not started`);
-    } else {
-      logger.error('Server error', { err: err.message });
+async function start() {
+  for (const port of PORTS_TO_TRY) {
+    try {
+      httpServer = http.createServer(app);
+      setupSocketIO(httpServer);
+      await _tryListen(httpServer, port);
+      activePort = port;
+      logger.info(`Nexus API server listening on http://127.0.0.1:${port}`);
+      _savePort(port);
+      return;
+    } catch (err) {
+      // Clean up this server instance before trying next port
+      try { httpServer.close(); } catch (_) {}
+      if (io) { try { io.close(); } catch (_) {} io = null; }
+      httpServer = null;
+
+      if (err.code === 'EADDRINUSE') {
+        logger.warn(`Port ${port} in use – trying next port`);
+      } else {
+        logger.error('Server error', { err: err.message });
+        return;
+      }
     }
-  });
+  }
+
+  logger.error('All ports in use. Nexus API server not started.');
 }
 
 function stop() {
   if (httpServer) {
     httpServer.close(() => logger.info('Nexus API server stopped'));
     httpServer = null;
+    activePort = null;
   }
 }
 
-module.exports = { app, start, stop };
+module.exports = { app, start, stop, getActivePort: () => activePort };
