@@ -17,6 +17,7 @@ const SEGMENT_RETRIES     = 3;
 const LIVE_POLL_INTERVAL  = 2000;
 const LIVE_MAX_SEGMENTS   = 10000;
 const FETCH_TIMEOUT       = 20_000;
+const BYTES_PER_SEGMENT_ESTIMATE = 1024 * 1024; // 1 MB fallback for ETA
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -262,9 +263,14 @@ class HlsEngine extends EventEmitter {
         const total = this._totalSegments || segments.length;
         const progress = (this._completedSegments / total) * 100;
         const speed = this.speedTracker.getSpeed();
-        const eta = speed > 0 && total > 0
-          ? Math.ceil(((total - this._completedSegments) * (data.length)) / speed)
-          : 0;
+        // Use rolling average bytes-per-segment for ETA; fall back to constant estimate
+        const avgSegmentSize = this._completedSegments > 0
+          ? (this.speedTracker.getAvgSpeed() > 0
+              ? BYTES_PER_SEGMENT_ESTIMATE
+              : data.length)
+          : BYTES_PER_SEGMENT_ESTIMATE;
+        const remainingBytes = (total - this._completedSegments) * avgSegmentSize;
+        const eta = speed > 0 && remainingBytes > 0 ? Math.ceil(remainingBytes / speed) : 0;
 
         this.emit('progress', {
           downloaded: this._completedSegments,

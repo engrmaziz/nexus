@@ -330,9 +330,16 @@ const db = {
           chunks_done  = @chunksDone,
           updated_at   = datetime('now')
       WHERE id = @id
-    `).run({ id, downloaded: downloaded || 0, speed: speed || 0, avgSpeed: avgSpeed || 0,
-              progress: progress || 0, eta: eta || 0, chunksTotal: chunksTotal || 0,
-              chunksDone: chunksDone || 0 });
+    `).run({
+      id,
+      downloaded:  downloaded  || 0,
+      speed:       speed       || 0,
+      avgSpeed:    avgSpeed    || 0,
+      progress:    progress    || 0,
+      eta:         eta         || 0,
+      chunksTotal: chunksTotal || 0,
+      chunksDone:  chunksDone  || 0,
+    });
   },
 
   // ── speed_history ──────────────────────────────────────────────────────────
