@@ -38,7 +38,10 @@
     "sanitize-filename": "^1.6.3",
     "file-type": "^19.0.0",
     "hash-sum": "^2.0.0",
-    "leven": "^4.0.0"
+    "leven": "^4.0.0",
+    "p-limit": "^3.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "fast-xml-parser": "^4.5.4"
   },
   "devDependencies": {
     "electron": "^29.1.4",
