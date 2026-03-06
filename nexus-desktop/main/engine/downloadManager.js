@@ -281,6 +281,7 @@ class DownloadManager extends EventEmitter {
     this._stopProgressSaver(id);
     this.active.delete(id);
     this.emit('update', id, { status: STATUS.PAUSED });
+    this.emit('paused', { id, status: STATUS.PAUSED });
     logger.info('Download paused', { id });
   }
 
@@ -496,7 +497,8 @@ class DownloadManager extends EventEmitter {
         progress: p.progress || 0,
         eta: p.eta || 0,
       });
-      this.emit('update', dl.id, {
+      const progressData = {
+        id: dl.id,
         status: STATUS.DOWNLOADING,
         downloaded: p.downloaded,
         total: p.total,
@@ -505,7 +507,9 @@ class DownloadManager extends EventEmitter {
         eta: p.eta,
         chunksActive: p.chunksActive,
         chunksComplete: p.chunksComplete,
-      });
+      };
+      this.emit('update', dl.id, progressData);
+      this.emit('progress', progressData);
     };
 
     await downloadWithChunks(
@@ -529,7 +533,9 @@ class DownloadManager extends EventEmitter {
       engine.on('progress', (p) => {
         const progress = Math.min(100, p.percent || 0);
         this._progressCache.set(dl.id, { downloaded: 0, speed: 0, progress, eta: 0 });
-        this.emit('update', dl.id, { status: STATUS.DOWNLOADING, progress });
+        const progressData = { id: dl.id, status: STATUS.DOWNLOADING, progress };
+        this.emit('update', dl.id, progressData);
+        this.emit('progress', progressData);
       });
       engine.on('complete', resolve);
       engine.on('error', reject);
