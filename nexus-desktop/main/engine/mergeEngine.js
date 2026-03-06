@@ -110,11 +110,53 @@ function runFfmpeg(args, label) {
   });
 }
 
+// ─── Edge case [16]: Limit concurrent FFmpeg merge operations to 2 ────────────
+// Queue others and show "Merging..." status.
+
+const MAX_CONCURRENT_FFMPEG = 2;
+let _activeFFmpeg = 0;
+const _ffmpegQueue = [];
+
+/**
+ * Run FFmpeg respecting the concurrency limit.
+ * Returns a promise that resolves when the job completes.
+ * If at capacity, the job is queued and will run when a slot opens.
+ * @param {Function} jobFn  Zero-arg async function that runs the actual FFmpeg work.
+ * @param {string}   label  For logging.
+ * @returns {Promise<void>}
+ */
+function runFfmpegQueued(jobFn, label) {
+  return new Promise((resolve, reject) => {
+    function tryRun() {
+      if (_activeFFmpeg < MAX_CONCURRENT_FFMPEG) {
+        _activeFFmpeg++;
+        logger.debug(`FFmpeg slot acquired (${_activeFFmpeg}/${MAX_CONCURRENT_FFMPEG})`, { label });
+        jobFn()
+          .then(resolve, reject)
+          .finally(() => {
+            _activeFFmpeg--;
+            logger.debug(`FFmpeg slot released (${_activeFFmpeg}/${MAX_CONCURRENT_FFMPEG})`, { label });
+            // Drain the queue
+            if (_ffmpegQueue.length > 0) {
+              const next = _ffmpegQueue.shift();
+              next();
+            }
+          });
+      } else {
+        logger.debug(`FFmpeg queue full – queuing job`, { label, queued: _ffmpegQueue.length + 1 });
+        _ffmpegQueue.push(tryRun);
+      }
+    }
+    tryRun();
+  });
+}
+
 // ─── MergeEngine ─────────────────────────────────────────────────────────────
 
 class MergeEngine {
   /**
    * Concatenate chunk part files (from chunkEngine) into the final file.
+   * Edge case [16]: Runs through runFfmpegQueued – max 2 concurrent FFmpeg processes.
    * @param {string[]} chunkPaths  Ordered array of `.part_N` files.
    * @param {string}   outputPath
    * @returns {Promise<void>}
@@ -123,17 +165,14 @@ class MergeEngine {
     if (chunkPaths.length === 0) throw new Error('No chunk files to merge');
 
     const listFile = writeConcatFile(chunkPaths);
+    const label    = `mergeChunks → ${path.basename(outputPath)}`;
     const args = [
-      '-y',
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', listFile,
-      '-c', 'copy',
-      outputPath,
+      '-y', '-f', 'concat', '-safe', '0',
+      '-i', listFile, '-c', 'copy', outputPath,
     ];
 
     try {
-      await runFfmpeg(args, `mergeChunks → ${path.basename(outputPath)}`);
+      await runFfmpegQueued(() => runFfmpeg(args, label), label);
     } finally {
       try { fs.unlinkSync(listFile); } catch (_) {}
     }
@@ -144,23 +183,22 @@ class MergeEngine {
 
   /**
    * Merge a separate video track and audio track into a single container.
+   * Edge case [16]: Runs through runFfmpegQueued – max 2 concurrent FFmpeg processes.
    * @param {string} videoPath
    * @param {string} audioPath
    * @param {string} outputPath
    * @returns {Promise<void>}
    */
   async mergeAudioVideo(videoPath, audioPath, outputPath) {
+    const label = `mergeAudioVideo → ${path.basename(outputPath)}`;
     const args = [
       '-y',
-      '-i', videoPath,
-      '-i', audioPath,
-      '-c:v', 'copy',
-      '-c:a', 'copy',
-      '-movflags', '+faststart',
-      '-shortest',
+      '-i', videoPath, '-i', audioPath,
+      '-c:v', 'copy', '-c:a', 'copy',
+      '-movflags', '+faststart', '-shortest',
       outputPath,
     ];
-    return runFfmpeg(args, `mergeAudioVideo → ${path.basename(outputPath)}`);
+    return runFfmpegQueued(() => runFfmpeg(args, label), label);
   }
 
   /** Alias for backward compatibility with dashEngine / hlsEngine */
@@ -170,6 +208,7 @@ class MergeEngine {
 
   /**
    * Concatenate TS / m4s segment files into a single output file.
+   * Edge case [16]: Runs through runFfmpegQueued – max 2 concurrent FFmpeg processes.
    * @param {string[]} segmentPaths
    * @param {string}   outputPath
    * @returns {Promise<void>}
@@ -178,17 +217,14 @@ class MergeEngine {
     if (segmentPaths.length === 0) throw new Error('No segments to concatenate');
 
     const listFile = writeConcatFile(segmentPaths);
+    const label    = `concatSegments → ${path.basename(outputPath)}`;
     const args = [
-      '-y',
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', listFile,
-      '-c', 'copy',
-      outputPath,
+      '-y', '-f', 'concat', '-safe', '0',
+      '-i', listFile, '-c', 'copy', outputPath,
     ];
 
     try {
-      await runFfmpeg(args, `concatSegments → ${path.basename(outputPath)}`);
+      await runFfmpegQueued(() => runFfmpeg(args, label), label);
     } finally {
       try { fs.unlinkSync(listFile); } catch (_) {}
     }

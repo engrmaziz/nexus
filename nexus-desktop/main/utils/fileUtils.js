@@ -159,6 +159,63 @@ async function getFreeSpace(dirPath) {
   }
 }
 
+/**
+ * Edge case [9]: Filename collision handling.
+ * If a file with the given name already exists at destDir, append (2), (3), etc.
+ * Never silently overwrites an existing file.
+ * @param {string} destDir
+ * @param {string} filename
+ * @returns {string} A filename that does not yet exist at destDir.
+ */
+function uniqueFilename(destDir, filename) {
+  const ext  = path.extname(filename);
+  const base = path.basename(filename, ext);
+  let candidate = filename;
+  let counter   = 2;
+
+  while (fs.existsSync(path.join(destDir, candidate))) {
+    candidate = `${base} (${counter})${ext}`;
+    counter++;
+  }
+
+  return candidate;
+}
+
+/**
+ * Edge case [7]: Detect whether a directory is on a FAT32 filesystem.
+ * Returns true only when FAT32 is confirmed; false otherwise (including unknown).
+ * @param {string} dirPath
+ * @returns {Promise<boolean>}
+ */
+async function isFat32(dirPath) {
+  try {
+    const { execFileSync } = require('child_process');
+    if (process.platform === 'win32') {
+      // Safely extract just the drive letter (e.g. "C:") from the path
+      const root = path.parse(dirPath).root;   // e.g. "C:\\"
+      const drive = root.replace(/\\/g, '').replace(/\//g, '').toUpperCase(); // "C:"
+      // Only allow well-formed drive specifiers (letter + colon) to avoid injection
+      if (!/^[A-Z]:$/.test(drive)) return false;
+      const out = execFileSync('wmic', [
+        'logicaldisk', 'where', `DeviceID='${drive}'`, 'get', 'FileSystem', '/value',
+      ], { encoding: 'utf8', timeout: 5000 });
+      return /FileSystem=FAT32/i.test(out);
+    } else if (process.platform === 'linux') {
+      // stat -f -c %T <path> prints the filesystem type (e.g. "vfat")
+      const out = execFileSync('stat', ['-f', '-c', '%T', dirPath],
+        { encoding: 'utf8', timeout: 5000 });
+      return /vfat/i.test(out.trim());
+    } else if (process.platform === 'darwin') {
+      const out = execFileSync('diskutil', ['info', dirPath],
+        { encoding: 'utf8', timeout: 5000 });
+      return /MS-DOS FAT32/i.test(out);
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
 module.exports = {
   ensureDir,
   moveFile,
@@ -171,4 +228,6 @@ module.exports = {
   writeAtomic,
   listFiles,
   getFreeSpace,
+  uniqueFilename,
+  isFat32,
 };
