@@ -5,6 +5,7 @@
   "description": "Supercharge every download. Every file. Every video site.",
   "permissions": [
     "webRequest",
+    "webNavigation",
     "declarativeNetRequest",
     "activeTab",
     "scripting",
