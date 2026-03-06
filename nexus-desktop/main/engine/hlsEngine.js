@@ -7,149 +7,295 @@ const http = require('http');
 const { EventEmitter } = require('events');
 const crypto = require('crypto');
 const { Parser: M3U8Parser } = require('m3u8-parser');
+const pLimit = require('p-limit');
 const MergeEngine = require('./mergeEngine');
 const SpeedTracker = require('./speedTracker');
 const logger = require('../utils/logger');
 
+const SEGMENT_CONCURRENCY = 12;
+const SEGMENT_RETRIES     = 3;
+const LIVE_POLL_INTERVAL  = 2000;
+const LIVE_MAX_SEGMENTS   = 10000;
+const FETCH_TIMEOUT       = 20_000;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 /**
- * HlsEngine – downloads an HLS (m3u8) stream and optionally decrypts AES-128 segments.
+ * Resolve a potentially relative URI against a base URL.
+ */
+function resolveUrl(uri, base) {
+  if (/^https?:\/\//i.test(uri)) return uri;
+  const b = new URL(base);
+  if (uri.startsWith('//')) return `${b.protocol}${uri}`;
+  if (uri.startsWith('/')) return `${b.protocol}//${b.host}${uri}`;
+  const dir = b.pathname.split('/').slice(0, -1).join('/');
+  return `${b.protocol}//${b.host}${dir}/${uri}`;
+}
+
+/** GET as text, follows one level of redirect. */
+function fetchText(url, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(
+      url,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NexusDownloader/1.0)', ...extraHeaders }, timeout: FETCH_TIMEOUT },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(fetchText(res.headers.location, extraHeaders));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+        }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (c) => (body += c));
+        res.on('end', () => resolve(body));
+        res.on('error', reject);
+      }
+    ).on('error', reject)
+     .on('timeout', function () { this.destroy(new Error(`Timeout fetching ${url}`)); });
+  });
+}
+
+/** GET as Buffer, with retries, follows one level of redirect. */
+async function fetchBuffer(url, extraHeaders = {}, retries = SEGMENT_RETRIES) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const buf = await _fetchBufferOnce(url, extraHeaders);
+      return buf;
+    } catch (err) {
+      if (attempt === retries) throw err;
+      const delay = 500 * Math.pow(2, attempt);
+      logger.warn(`Segment fetch failed (attempt ${attempt + 1}/${retries + 1}), retry in ${delay}ms`, { url, err: err.message });
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+function _fetchBufferOnce(url, extraHeaders) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(
+      url,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NexusDownloader/1.0)', ...extraHeaders }, timeout: FETCH_TIMEOUT },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(_fetchBufferOnce(res.headers.location, extraHeaders));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+        }
+        const bufs = [];
+        res.on('data', (c) => bufs.push(c));
+        res.on('end', () => resolve(Buffer.concat(bufs)));
+        res.on('error', reject);
+      }
+    ).on('error', reject)
+     .on('timeout', function () { this.destroy(new Error(`Timeout fetching ${url}`)); });
+  });
+}
+
+// ─── HlsEngine ────────────────────────────────────────────────────────────────
+
+/**
+ * HlsEngine – downloads an HLS stream (.m3u8), decrypts AES-128 segments,
+ * and merges them using FFmpeg.
  *
- * Emits: 'progress' { downloaded, total, speed, progress }, 'complete', 'error'
+ * Emits: 'progress' { downloaded, total, speed, progress, eta }
+ *        'complete'
+ *        'error' Error
  */
 class HlsEngine extends EventEmitter {
+  /**
+   * @param {object}  opts
+   * @param {string}  opts.url          Master or media playlist URL.
+   * @param {string}  opts.outputFile   Final output file path.
+   * @param {string}  opts.tempDir      Directory for temp segment files.
+   * @param {object}  [opts.headers]    Extra HTTP headers.
+   * @param {string}  [opts.quality]    'best' (default) or target bandwidth.
+   */
   constructor(opts) {
     super();
     this.url = opts.url;
     this.outputFile = opts.outputFile;
     this.tempDir = opts.tempDir;
     this.headers = opts.headers || {};
-    this.concurrency = opts.concurrency || 8;
+    this.quality = opts.quality || 'best';
     this._aborted = false;
     this._paused = false;
     this.speedTracker = new SpeedTracker();
     this._segments = [];
-    this._downloaded = 0;
-    this._total = 0;
+    this._completedSegments = 0;
+    this._totalSegments = 0;
+    this._keyCache = new Map(); // key URI → Buffer
   }
 
   async start() {
     try {
-      const manifest = await this._fetchText(this.url);
+      await fs.promises.mkdir(this.tempDir, { recursive: true });
+      const manifest = await fetchText(this.url, this.headers);
       const parser = new M3U8Parser();
       parser.push(manifest);
       parser.end();
-
       const parsed = parser.manifest;
 
-      // If this is a master playlist, pick the highest-bandwidth variant
+      // Master playlist → pick variant
       if (parsed.playlists && parsed.playlists.length > 0) {
-        const sorted = [...parsed.playlists].sort(
-          (a, b) => (b.attributes.BANDWIDTH || 0) - (a.attributes.BANDWIDTH || 0)
-        );
-        const variantUrl = this._resolveUrl(sorted[0].uri, this.url);
-        return this._downloadVariant(variantUrl, parsed.playlists[0].attributes);
+        const variant = this._selectVariant(parsed.playlists);
+        const variantUrl = resolveUrl(variant.uri, this.url);
+        await this._downloadMediaPlaylist(variantUrl);
+      } else {
+        await this._downloadMediaPlaylist(this.url);
       }
-
-      await this._downloadVariant(this.url, {});
     } catch (err) {
       if (!this._aborted) this.emit('error', err);
     }
   }
 
-  pause() { this._paused = true; }
-  resume() { this._paused = false; this._processSegments().catch((e) => this.emit('error', e)); }
-  abort() { this._aborted = true; this._paused = true; }
+  pause()  { this._paused = true; }
+  resume() { this._paused = false; }
+  abort()  { this._aborted = true; this._paused = true; }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Internals
-  // ──────────────────────────────────────────────────────────────────────
+  // ─── Internals ────────────────────────────────────────────────────────
 
-  async _downloadVariant(variantUrl, _attrs) {
-    const text = await this._fetchText(variantUrl);
-    const parser = new M3U8Parser();
-    parser.push(text);
-    parser.end();
+  _selectVariant(playlists) {
+    const sorted = [...playlists].sort(
+      (a, b) => (b.attributes?.BANDWIDTH || 0) - (a.attributes?.BANDWIDTH || 0)
+    );
+    return sorted[0];
+  }
 
-    const manifest = parser.manifest;
-    this._segments = manifest.segments || [];
-    this._total = this._segments.length;
+  async _downloadMediaPlaylist(playlistUrl) {
+    // For live streams we poll; for VOD we parse once
+    let segmentFiles = [];
+    let isLive = false;
 
-    if (this._total === 0) throw new Error('No segments found in HLS manifest');
+    const loadPlaylist = async () => {
+      const text = await fetchText(playlistUrl, this.headers);
+      const p = new M3U8Parser();
+      p.push(text);
+      p.end();
+      const m = p.manifest;
+      isLive = !m.endList;
+      const newSegs = (m.segments || []).map((s) => ({
+        ...s,
+        resolvedUri: resolveUrl(s.uri, playlistUrl),
+      }));
+      return newSegs;
+    };
 
-    await this._processSegments();
+    this._segments = await loadPlaylist();
+    let segmentOffset = 0;
 
-    // Concatenate all segment files into the output
-    const segFiles = [];
-    for (let i = 0; i < this._segments.length; i++) {
-      const f = path.join(this.tempDir, `seg_${i}.ts`);
-      if (fs.existsSync(f)) segFiles.push(f);
+    if (isLive) {
+      // Live: keep polling until we hit the cap
+      let totalCap = 0;
+      while (!this._aborted && totalCap < LIVE_MAX_SEGMENTS) {
+        const newSegs = this._segments.slice(segmentOffset);
+        if (newSegs.length > 0) {
+          const downloaded = await this._downloadSegments(newSegs, segmentOffset, segmentFiles.length);
+          segmentFiles = segmentFiles.concat(downloaded);
+          segmentOffset = this._segments.length;
+          totalCap += downloaded.length;
+        }
+        if (this._aborted) break;
+        await new Promise((r) => setTimeout(r, LIVE_POLL_INTERVAL));
+        // Re-fetch playlist to discover new segments
+        const refreshed = await loadPlaylist();
+        for (const seg of refreshed) {
+          if (!this._segments.some((s) => s.resolvedUri === seg.resolvedUri)) {
+            this._segments.push(seg);
+          }
+        }
+        if (!isLive) break; // endList appeared
+      }
+    } else {
+      this._totalSegments = this._segments.length;
+      if (this._totalSegments === 0) throw new Error('No segments found in HLS playlist');
+      segmentFiles = await this._downloadSegments(this._segments, 0, 0);
     }
 
-    // Use FFmpeg to concat + convert
+    // Merge segments
     const merger = new MergeEngine();
-    await merger.concatTsFiles(segFiles, this.outputFile);
+    await merger.concatSegments(segmentFiles, this.outputFile);
 
-    this._cleanup(segFiles);
+    this._cleanup(segmentFiles);
     this.emit('complete');
   }
 
-  async _processSegments() {
-    // Process segments with bounded concurrency
-    const chunks = [];
-    for (let i = 0; i < this._segments.length; i += this.concurrency) {
-      chunks.push(this._segments.slice(i, i + this.concurrency).map((s, j) => ({ seg: s, idx: i + j })));
-    }
+  async _downloadSegments(segments, globalOffset, existingCount) {
+    const limit = pLimit(SEGMENT_CONCURRENCY);
+    const segmentFiles = [];
 
-    for (const batch of chunks) {
-      if (this._aborted) return;
-      while (this._paused && !this._aborted) {
-        await new Promise((r) => setTimeout(r, 500));
-      }
+    const tasks = segments.map((seg, localIdx) => {
+      const globalIdx = globalOffset + localIdx;
+      const outFile = path.join(this.tempDir, `seg_${String(existingCount + localIdx).padStart(6, '0')}.ts`);
+      segmentFiles[localIdx] = outFile;
 
-      await Promise.all(batch.map(({ seg, idx }) => this._downloadSegment(seg, idx)));
-    }
-  }
+      return limit(async () => {
+        if (this._aborted) return;
 
-  async _downloadSegment(seg, idx) {
-    const segUrl = this._resolveUrl(seg.uri, this.url);
-    const outFile = path.join(this.tempDir, `seg_${idx}.ts`);
+        // Wait if paused
+        while (this._paused && !this._aborted) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        if (this._aborted) return;
 
-    // Skip if already downloaded
-    if (fs.existsSync(outFile)) {
-      this._downloaded++;
-      return;
-    }
+        // Skip already-downloaded segment
+        if (fs.existsSync(outFile)) {
+          this._completedSegments++;
+          return;
+        }
 
-    let data = await this._fetchBuffer(segUrl);
+        let data = await fetchBuffer(seg.resolvedUri, this.headers);
 
-    // AES-128 decryption
-    if (seg.key && seg.key.method === 'AES-128') {
-      data = await this._decryptSegment(data, seg.key, seg.timeline, idx);
-    }
+        // AES-128 decryption
+        if (seg.key && seg.key.method === 'AES-128') {
+          data = await this._decryptSegment(data, seg.key, globalIdx);
+        }
 
-    fs.writeFileSync(outFile, data);
-    this._downloaded++;
-    this.speedTracker.update(data.length);
+        fs.writeFileSync(outFile, data);
+        this._completedSegments++;
+        this.speedTracker.addSample(data.length);
 
-    const progress = (this._downloaded / this._total) * 100;
-    this.emit('progress', {
-      downloaded: this._downloaded,
-      total: this._total,
-      speed: this.speedTracker.getSpeed(),
-      progress: Math.min(100, progress),
+        const total = this._totalSegments || segments.length;
+        const progress = (this._completedSegments / total) * 100;
+        const speed = this.speedTracker.getSpeed();
+        const eta = speed > 0 && total > 0
+          ? Math.ceil(((total - this._completedSegments) * (data.length)) / speed)
+          : 0;
+
+        this.emit('progress', {
+          downloaded: this._completedSegments,
+          total,
+          speed,
+          progress: Math.min(100, progress),
+          eta,
+        });
+      });
     });
+
+    await Promise.all(tasks);
+    return segmentFiles;
   }
 
-  async _decryptSegment(data, keyInfo, _timeline, segIdx) {
-    const keyUrl = this._resolveUrl(keyInfo.uri, this.url);
-    const keyBuf = await this._fetchBuffer(keyUrl);
+  async _decryptSegment(data, keyInfo, segIdx) {
+    const keyUri = resolveUrl(keyInfo.uri, this.url);
 
-    // IV: use sequence number if not specified
-    const iv = keyInfo.iv
-      ? Buffer.from(keyInfo.iv.replace(/^0x/i, ''), 'hex')
-      : Buffer.alloc(16);
+    // Cache keys to avoid re-fetching
+    let keyBuf = this._keyCache.get(keyUri);
+    if (!keyBuf) {
+      keyBuf = await fetchBuffer(keyUri, this.headers);
+      this._keyCache.set(keyUri, keyBuf);
+    }
 
-    if (!keyInfo.iv) {
+    // IV: explicit from playlist or segment sequence number as 16-byte big-endian
+    let iv;
+    if (keyInfo.iv) {
+      iv = Buffer.from(keyInfo.iv.replace(/^0x/i, ''), 'hex');
+    } else {
+      iv = Buffer.alloc(16);
       iv.writeUInt32BE(segIdx, 12);
     }
 
@@ -157,50 +303,9 @@ class HlsEngine extends EventEmitter {
     return Buffer.concat([decipher.update(data), decipher.final()]);
   }
 
-  _fetchText(url) {
-    return new Promise((resolve, reject) => {
-      const mod = url.startsWith('https') ? https : http;
-      let body = '';
-      mod.get(url, { headers: this.headers }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          return resolve(this._fetchText(res.headers.location));
-        }
-        res.setEncoding('utf8');
-        res.on('data', (c) => (body += c));
-        res.on('end', () => resolve(body));
-        res.on('error', reject);
-      }).on('error', reject);
-    });
-  }
-
-  _fetchBuffer(url) {
-    return new Promise((resolve, reject) => {
-      const mod = url.startsWith('https') ? https : http;
-      const chunks = [];
-      mod.get(url, { headers: this.headers }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          return resolve(this._fetchBuffer(res.headers.location));
-        }
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-        res.on('error', reject);
-      }).on('error', reject);
-    });
-  }
-
-  _resolveUrl(uri, base) {
-    if (/^https?:\/\//i.test(uri)) return uri;
-    const baseUrl = new URL(base);
-    if (uri.startsWith('/')) {
-      return `${baseUrl.protocol}//${baseUrl.host}${uri}`;
-    }
-    const dir = baseUrl.pathname.split('/').slice(0, -1).join('/');
-    return `${baseUrl.protocol}//${baseUrl.host}${dir}/${uri}`;
-  }
-
   _cleanup(files) {
     for (const f of files) {
-      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
+      try { if (f && fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
     }
   }
 }
