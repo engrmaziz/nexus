@@ -1,7 +1,5 @@
 'use strict';
 
-const { getDb } = require('./database');
-
 let _stmts = null;
 
 /**
@@ -11,6 +9,9 @@ let _stmts = null;
 function getStatements() {
   if (_stmts) return _stmts;
 
+  // Lazy require avoids capturing a stale reference during circular-dependency
+  // resolution (database → migrations → queries → database).
+  const { getDb } = require('./database');
   const db = getDb();
 
   _stmts = {
@@ -218,8 +219,16 @@ function getStatements() {
 
 /**
  * Invalidate cached statements (e.g. after a migration adds new columns).
+ * Frees the underlying sql.js prepared statements to avoid memory leaks.
  */
 function resetStatements() {
+  if (_stmts) {
+    for (const stmt of Object.values(_stmts)) {
+      if (stmt && typeof stmt.free === 'function') {
+        try { stmt.free(); } catch (_) {}
+      }
+    }
+  }
   _stmts = null;
 }
 

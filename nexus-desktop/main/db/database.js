@@ -3,7 +3,7 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const BetterSqlite3 = require('better-sqlite3');
+const initSqlJs = require('sql.js');
 const logger = require('../utils/logger');
 const migrations = require('./migrations');
 
@@ -160,6 +160,182 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_schedule_hour       ON ai_schedule(hour, day_of_week);
 `;
 
+// ─── sql.js compatibility wrapper ────────────────────────────────────────────
+
+/**
+ * Convert @name parameter placeholders (better-sqlite3 style) to $name
+ * (sql.js style) in a SQL string.
+ */
+function _convertNamedParams(sql) {
+  return sql.replace(/@(\w+)/g, '$$$1');
+}
+
+/**
+ * Normalise the arguments passed to .run() / .get() / .all() into the form
+ * that sql.js's Statement.bind() expects:
+ *   - undefined  → no binding (queries with no parameters)
+ *   - plain object → named-param object with $-prefixed keys
+ *   - single primitive / array → positional array
+ *   - multiple primitives → positional array
+ */
+function _normalizeBindParams(args) {
+  if (args.length === 0) return undefined;
+
+  if (args.length === 1) {
+    const arg = args[0];
+    if (arg === null || arg === undefined) return undefined;
+    if (Array.isArray(arg)) return arg.map((v) => (v === undefined ? null : v));
+    if (typeof arg === 'object') {
+      // Named-param object: strip any existing sigil and re-prefix with $
+      const result = {};
+      for (const [k, v] of Object.entries(arg)) {
+        const name = /^[$:@]/.test(k) ? k.slice(1) : k;
+        result[`$${name}`] = v === undefined ? null : v;
+      }
+      return result;
+    }
+    // Single primitive value → positional
+    return [arg];
+  }
+
+  // Multiple positional arguments
+  return Array.from(args).map((v) => (v === undefined ? null : v));
+}
+
+/**
+ * A thin wrapper around a sql.js Statement that exposes the better-sqlite3
+ * interface (.run / .get / .all / .free).
+ */
+class _SqlJsStatement {
+  constructor(sqlJsDb, sql, onWrite) {
+    this._db = sqlJsDb;
+    this._sql = _convertNamedParams(sql);
+    this._onWrite = onWrite;
+    this._stmt = null;
+  }
+
+  _open() {
+    if (!this._stmt) this._stmt = this._db.prepare(this._sql);
+    return this._stmt;
+  }
+
+  run(...args) {
+    const stmt = this._open();
+    stmt.bind(_normalizeBindParams(args));
+    stmt.step();
+    stmt.reset();
+    this._onWrite();
+    return this;
+  }
+
+  get(...args) {
+    const stmt = this._open();
+    stmt.bind(_normalizeBindParams(args));
+    const result = stmt.step() ? stmt.getAsObject() : undefined;
+    stmt.reset();
+    return result;
+  }
+
+  all(...args) {
+    const stmt = this._open();
+    stmt.bind(_normalizeBindParams(args));
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    stmt.reset();
+    return rows;
+  }
+
+  free() {
+    if (this._stmt) {
+      try { this._stmt.free(); } catch (_) {}
+      this._stmt = null;
+    }
+  }
+}
+
+/**
+ * Wrap a raw sql.js Database with the better-sqlite3-style API surface used
+ * throughout this codebase (.prepare / .exec / .pragma / .transaction / .close).
+ * Data is persisted to dbPath with a short debounce on every write.
+ */
+function _createDbWrapper(sqlJsDb, dbPath) {
+  let _persistTimer = null;
+  let _dirty = false;
+
+  function _persistNow(sync = false) {
+    if (!_dirty) return;
+    try {
+      const data = sqlJsDb.export();
+      const buf = Buffer.from(data);
+      if (sync) {
+        fs.writeFileSync(dbPath, buf);
+      } else {
+        fs.writeFile(dbPath, buf, (err) => {
+          if (err) logger.error('Failed to persist database to disk', { err: err.message });
+        });
+      }
+      _dirty = false;
+    } catch (err) {
+      logger.error('Failed to export database', { err: err.message });
+    }
+  }
+
+  function _scheduleWrite() {
+    _dirty = true;
+    if (_persistTimer) return;
+    _persistTimer = setTimeout(() => {
+      _persistTimer = null;
+      _persistNow();
+    }, 500);
+  }
+
+  return {
+    prepare(sql) {
+      return new _SqlJsStatement(sqlJsDb, sql, _scheduleWrite);
+    },
+
+    exec(sql) {
+      sqlJsDb.exec(sql);
+      _scheduleWrite();
+    },
+
+    pragma(statement) {
+      const results = sqlJsDb.exec(`PRAGMA ${statement}`);
+      if (!results || results.length === 0) return [];
+      const { columns, values } = results[0];
+      return values.map((row) => {
+        const obj = {};
+        columns.forEach((col, i) => { obj[col] = row[i]; });
+        return obj;
+      });
+    },
+
+    transaction(fn) {
+      return (...args) => {
+        sqlJsDb.run('BEGIN');
+        try {
+          const result = fn(...args);
+          sqlJsDb.run('COMMIT');
+          _scheduleWrite();
+          return result;
+        } catch (err) {
+          try { sqlJsDb.run('ROLLBACK'); } catch (_) {}
+          throw err;
+        }
+      };
+    },
+
+    close() {
+      if (_persistTimer) {
+        clearTimeout(_persistTimer);
+        _persistTimer = null;
+      }
+      _persistNow(true); // synchronous: app is shutting down
+      try { sqlJsDb.close(); } catch (_) {}
+    },
+  };
+}
+
 // ─── Open / Close ─────────────────────────────────────────────────────────────
 
 /**
@@ -167,23 +343,31 @@ const SCHEMA_SQL = `
  * Edge case [14]: On startup, run PRAGMA integrity_check.
  * If corruption detected: backup the corrupt DB and create a fresh one.
  * Returns the singleton db instance.
+ *
+ * NOTE: async because sql.js initialisation (WASM load) is asynchronous.
  */
-function openDatabase() {
+async function openDatabase() {
   if (_db) return _db;
 
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  // Try to open and integrity-check the existing DB
+  const SQL = await initSqlJs();
+
+  // Try to integrity-check the existing DB before loading it
   if (fs.existsSync(DB_PATH)) {
     let integrityOk = false;
     try {
-      const testDb = new BetterSqlite3(DB_PATH, { verbose: null });
-      const result = testDb.pragma('integrity_check');
-      integrityOk = Array.isArray(result)
-        ? result[0]?.integrity_check === 'ok'
-        : String(result) === 'ok';
+      const fileBuffer = fs.readFileSync(DB_PATH);
+      const testDb = new SQL.Database(fileBuffer);
+      const result = testDb.exec('PRAGMA integrity_check');
       testDb.close();
+      integrityOk =
+        result &&
+        result.length > 0 &&
+        result[0].values &&
+        result[0].values[0] &&
+        result[0].values[0][0] === 'ok';
     } catch (err) {
       logger.error('DB integrity check failed to run', { err: err.message });
       integrityOk = false;
@@ -203,7 +387,16 @@ function openDatabase() {
     }
   }
 
-  _db = new BetterSqlite3(DB_PATH, { verbose: null });
+  // Load from file or create a new in-memory database
+  let sqlJsDb;
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    sqlJsDb = new SQL.Database(fileBuffer);
+  } else {
+    sqlJsDb = new SQL.Database();
+  }
+
+  _db = _createDbWrapper(sqlJsDb, DB_PATH);
 
   // Performance & reliability PRAGMAs
   _db.pragma('journal_mode = WAL');
@@ -443,9 +636,9 @@ const db = {
 
 /**
  * Initialize the database. Call once at app startup.
- * @returns {BetterSqlite3.Database}
+ * @returns {Promise<object>}  The wrapped sql.js database instance.
  */
-function initDatabase() {
+async function initDatabase() {
   return openDatabase();
 }
 
