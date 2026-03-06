@@ -60,16 +60,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 async function handleMessage(msg, sender) {
   switch (msg.type) {
-    case 'DOWNLOAD_URL':
-      await desktopBridge.sendDownload({
-        url: msg.url,
-        referrer: sender.url,
-        headers: msg.headers,
-        quality: msg.quality,
-        filename: msg.filename,
-      });
-      showNotification('Download Added', (msg.url || '').slice(0, 80));
-      return { ok: true };
+    case 'DOWNLOAD_URL': {
+      try {
+        await desktopBridge.sendDownload({
+          url: msg.url,
+          referrer: sender.url,
+          headers: msg.headers,
+          quality: msg.quality,
+          filename: msg.filename,
+        });
+        showNotification('Download Added', (msg.url || '').slice(0, 80));
+        return { ok: true };
+      } catch (err) {
+        // Edge case [10]: Desktop app not running – notify user and let browser handle it
+        if (err.message && err.message.includes('not running')) {
+          chrome.notifications.create(`nexus-app-offline-${Date.now()}`, {
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+            title: 'Nexus is not running',
+            message: 'Nexus app is not running. Download will proceed normally in browser.',
+            priority: 1,
+          });
+          // Track missed download in storage so the app can surface it on next startup
+          chrome.storage.local.get(['missedDownloads'], (result) => {
+            const missed = result.missedDownloads || [];
+            missed.push({ url: msg.url, timestamp: Date.now() });
+            chrome.storage.local.set({ missedDownloads: missed });
+          });
+          return { ok: false, fallback: true };
+        }
+        throw err;
+      }
+    }
 
     case 'DOWNLOAD_PLAYLIST':
       await desktopBridge.sendPlaylist({

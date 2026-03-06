@@ -85,6 +85,10 @@ class DownloadManager extends EventEmitter {
 
     if (!fs.existsSync(TEMP_BASE)) fs.mkdirSync(TEMP_BASE, { recursive: true });
     if (!fs.existsSync(DEFAULT_SAVE_DIR)) fs.mkdirSync(DEFAULT_SAVE_DIR, { recursive: true });
+
+    // Edge case [6]: Poll for connectivity every 30 seconds; auto-resume paused downloads.
+    this._networkPollTimer = setInterval(() => this._pollNetworkAndResume(), 30_000);
+    this._wasOffline = false;
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -121,12 +125,45 @@ class DownloadManager extends EventEmitter {
 
   destroy() {
     clearInterval(this._flushTimer);
+    clearInterval(this._networkPollTimer);
     for (const [id] of this._progressSavers) {
       this._stopProgressSaver(id);
     }
   }
 
-  // ─── Queue management ─────────────────────────────────────────────────────
+  // ─── Edge case [6]: Network connectivity polling ──────────────────────────
+
+  async _pollNetworkAndResume() {
+    try {
+      const online = await networkUtils.isOnline();
+      if (!online && !this._wasOffline) {
+        // Just went offline – pause all active downloads
+        this._wasOffline = true;
+        for (const [id] of this.active) {
+          try {
+            const ctrl = this.active.get(id);
+            if (ctrl) ctrl.abort();
+            this.active.delete(id);
+            this._stopProgressSaver(id);
+            const q = getStatements();
+            q.updateDownloadStatus.run({ id, status: STATUS.PAUSED });
+            this.emit('update', id, {
+              status: STATUS.PAUSED,
+              error_msg: 'Network lost. Download paused. Will resume when reconnected.',
+            });
+          } catch (_) {}
+        }
+        logger.warn('Network lost – all active downloads paused');
+      } else if (online && this._wasOffline) {
+        // Back online – auto-resume paused downloads
+        this._wasOffline = false;
+        logger.info('Network restored – auto-resuming paused downloads');
+        this.resumeAll();
+      }
+    } catch (_) {}
+  }
+
+
 
   /**
    * Add a new download.
@@ -181,6 +218,25 @@ class DownloadManager extends EventEmitter {
     resolvedFilename = nameCleaner.clean(resolvedFilename);
     const resolvedCategory = category || categorizer.categorize(resolvedFilename, mimeType, url);
     const finalSaveDir = fileUtils.ensureDir(path.join(saveDir, resolvedCategory));
+
+    // Edge case [9]: Filename collision – append (2), (3), etc. Never silently overwrite.
+    resolvedFilename = fileUtils.uniqueFilename(finalSaveDir, resolvedFilename);
+
+    // Edge case [7]: Large file on FAT32 – warn before starting.
+    if (fileSize > 4 * 1024 * 1024 * 1024) {
+      try {
+        const isFat32 = await fileUtils.isFat32(finalSaveDir);
+        if (isFat32) {
+          throw Object.assign(
+            new Error("Drive doesn't support large files (FAT32 limit 4 GB). Choose an NTFS or exFAT drive."),
+            { code: 'FAT32_LIMIT' }
+          );
+        }
+      } catch (err) {
+        if (err.code === 'FAT32_LIMIT') throw err;
+        // Could not detect filesystem – proceed and let OS throw if needed
+      }
+    }
 
     // Determine engine type
     const resolvedType = type || (isYtdlp || networkUtils.isYtdlpSupported(url) ? TYPE.YT : TYPE.FILE);
@@ -451,11 +507,33 @@ class DownloadManager extends EventEmitter {
         return;
       }
 
+      // Edge case [8]: Disk full – pause and preserve partial download for resuming.
+      if (err.code === 'ENOSPC') {
+        q.updateDownloadStatus.run({ id: dl.id, status: STATUS.PAUSED });
+        const msg = 'Disk full. Free up space and resume.';
+        q.updateDownloadError.run({ id: dl.id, error_msg: msg });
+        this._onFinish(dl.id);
+        this.emit('update', dl.id, { status: STATUS.PAUSED, error_msg: msg });
+        logger.error('Download paused – disk full (ENOSPC)', { id: dl.id });
+        return;
+      }
+
+      // Edge case [3]: Authentication required – treat as permanent failure
+      if (err.code === 'HTTP_401' || err.code === 'HTTP_403') {
+        const msg = 'This file requires login. Open in browser and try the Nexus button.';
+        q.updateDownloadError.run({ id: dl.id, error_msg: msg });
+        this._onFinish(dl.id);
+        this.emit('update', dl.id, { status: STATUS.ERROR, error_msg: msg });
+        this.emit('error', dl.id, err);
+        return;
+      }
+
       const current = q.getDownload.get(dl.id);
       const retries = current?.retries || 0;
       const maxRetries = dl.max_retries || 5;
 
-      if (retries < maxRetries) {
+      // Non-fatal errors with retries available
+      if (retries < maxRetries && !err.fatal) {
         q.incrementRetries.run(dl.id);
         const delay = 1000 * Math.pow(2, retries);
         logger.warn('Download error – scheduling retry', {
