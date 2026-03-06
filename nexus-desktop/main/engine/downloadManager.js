@@ -21,6 +21,45 @@ const fileUtils = require('../utils/fileUtils');
 const networkUtils = require('../utils/networkUtils');
 const logger = require('../utils/logger');
 
+// ─── Speed / ETA parsers for yt-dlp string output ────────────────────────────
+
+/**
+ * Parse a yt-dlp speed string (e.g. "5.23MiB/s", "512KiB/s") to bytes/second.
+ * Returns 0 if the string cannot be parsed.
+ * @param {string} speedStr
+ * @returns {number}
+ */
+function _parseSpeedToBytes(speedStr) {
+  if (!speedStr || typeof speedStr !== 'string') return 0;
+  const m = speedStr.match(/^([\d.]+)\s*([KMGT]?i?B)\/s$/i);
+  if (!m) return 0;
+  const val  = parseFloat(m[1]);
+  const unit = m[2].toUpperCase();
+  const units = {
+    'B': 1,
+    'KB': 1000,    'KIB': 1024,
+    'MB': 1e6,     'MIB': 1048576,
+    'GB': 1e9,     'GIB': 1073741824,
+    'TB': 1e12,    'TIB': 1099511627776,
+  };
+  return Math.round(val * (units[unit] || 1));
+}
+
+/**
+ * Parse a yt-dlp ETA string (e.g. "00:33", "01:30:00") to seconds.
+ * Returns 0 if the string cannot be parsed.
+ * @param {string} etaStr
+ * @returns {number}
+ */
+function _parseEtaToSeconds(etaStr) {
+  if (!etaStr || typeof etaStr !== 'string') return 0;
+  const parts = etaStr.split(':').map(Number);
+  if (parts.some(isNaN)) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parseInt(etaStr, 10) || 0;
+}
+
 const DEFAULT_SAVE_DIR = path.join(os.homedir(), 'Downloads', 'Nexus');
 const TEMP_BASE = path.join(
   process.env.NEXUS_DATA_DIR || path.join(os.homedir(), '.nexus'),
@@ -609,9 +648,25 @@ class DownloadManager extends EventEmitter {
 
     await new Promise((resolve, reject) => {
       engine.on('progress', (p) => {
-        const progress = Math.min(100, p.percent || 0);
-        this._progressCache.set(dl.id, { downloaded: 0, speed: 0, progress, eta: 0 });
-        const progressData = { id: dl.id, status: STATUS.DOWNLOADING, progress };
+        const progress  = Math.min(100, p.percent || 0);
+        const speedBytes = _parseSpeedToBytes(p.speed);
+        const etaSecs    = _parseEtaToSeconds(p.eta);
+
+        this._progressCache.set(dl.id, {
+          downloaded: 0,
+          speed:      speedBytes,
+          progress,
+          eta:        etaSecs,
+        });
+
+        const progressData = {
+          id:       dl.id,
+          status:   STATUS.DOWNLOADING,
+          progress,
+          speed:    speedBytes,
+          eta:      etaSecs,
+          totalSize: p.size || '',
+        };
         this.emit('update', dl.id, progressData);
         this.emit('progress', progressData);
       });
