@@ -19,6 +19,11 @@ const STEAL_INTERVAL  = 2_000;   // ms between byte-stealing checks
 const PROGRESS_INTERVAL = 200;   // ms between progress events
 const STEAL_THRESHOLD = 0.20;    // chunk needs > 20% remaining to be considered for stealing
 const MIN_STEAL_BYTES = 512 * 1024; // minimum remaining bytes to bother stealing
+/**
+ * A slow chunk must have at least (MIN_STEAL_BYTES * STEAL_MIN_FACTOR) remaining
+ * before we attempt to split its range and assign the second half to a new worker.
+ */
+const STEAL_MIN_FACTOR = 2;
 
 // Retry backoffs: 500 ms, 1 s, 2 s, 4 s, 8 s
 const RETRY_DELAYS = [500, 1000, 2000, 4000, 8000];
@@ -459,7 +464,7 @@ async function downloadWithChunks(url, outputPath, options = {}, onProgress) {
         const total = c.end - c.start + 1;
         const remaining = total - c.downloaded;
         const remainingFrac = remaining / total;
-        if (remainingFrac > STEAL_THRESHOLD && remaining > MIN_STEAL_BYTES * 2) {
+        if (remainingFrac > STEAL_THRESHOLD && remaining > MIN_STEAL_BYTES * STEAL_MIN_FACTOR) {
           if (remainingFrac > slowestRemainingFrac) {
             slowestRemainingFrac = remainingFrac;
             slowest = c;
@@ -487,7 +492,7 @@ async function downloadWithChunks(url, outputPath, options = {}, onProgress) {
 
       // Split the slow chunk's remaining range: give second half to a new worker
       const remaining = (slowest.end - slowest.start) - slowest.downloaded;
-      if (remaining < MIN_STEAL_BYTES * 2) return;
+      if (remaining < MIN_STEAL_BYTES * STEAL_MIN_FACTOR) return;
 
       const splitPoint = slowest.start + slowest.downloaded + Math.floor(remaining / 2);
       const newChunkIndex = chunks.length;

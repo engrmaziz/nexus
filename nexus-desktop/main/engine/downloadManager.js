@@ -292,7 +292,7 @@ class DownloadManager extends EventEmitter {
     const dl = q.getDownload.get(id);
     if (!dl) return;
     if (dl.status === STATUS.PAUSED) {
-      this._enqueue(id, dl.priority || 5, /* front= */ true);
+      this._enqueue(id, dl.priority || 5);
       this._processQueue();
     }
   }

@@ -1,6 +1,6 @@
 'use strict';
 
-const BUFFER_SIZE = 60; // 60 samples – 1-second rolling window when sampled each second
+const BUFFER_SIZE = 60; // 60 samples - 1-second rolling window when sampled each second
 
 /**
  * SpeedTracker – tracks download speed using a circular buffer of byte samples.

@@ -15,6 +15,12 @@ const VIDEO_CONCURRENCY = 8;
 const AUDIO_CONCURRENCY = 8;
 const SEGMENT_RETRIES   = 3;
 const FETCH_TIMEOUT     = 20_000;
+/**
+ * Maximum number of segments to generate when using a $Number$-based
+ * SegmentTemplate without a SegmentTimeline. Segments returning HTTP 404
+ * are silently skipped, so this cap limits worst-case requests.
+ */
+const MAX_TEMPLATE_SEGMENTS = 1000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -220,8 +226,7 @@ function _extractSegments(adaptations, mpdUrl, requestedHeight) {
     } else if (duration > 0) {
       // Use mediaPresentationDuration to figure out count
       // Approximate: just generate 1000 segments and stop at 404 (handled in download)
-      const approxCount = 1000;
-      for (let i = startNum; i < startNum + approxCount; i++) {
+      for (let i = startNum; i < startNum + MAX_TEMPLATE_SEGMENTS; i++) {
         const segUrl = media
           .replace('$RepresentationID$', rep['@_id'] || '')
           .replace('$Bandwidth$', rep['@_bandwidth'] || '')
