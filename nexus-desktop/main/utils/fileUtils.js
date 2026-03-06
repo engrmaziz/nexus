@@ -189,19 +189,25 @@ function uniqueFilename(destDir, filename) {
  */
 async function isFat32(dirPath) {
   try {
-    const { execSync } = require('child_process');
+    const { execFileSync } = require('child_process');
     if (process.platform === 'win32') {
-      const drive = path.parse(dirPath).root.replace(/\\/g, '');
-      const out = execSync(
-        `wmic logicaldisk where "DeviceID='${drive}'" get FileSystem /value`,
-        { encoding: 'utf8', timeout: 5000 }
-      );
+      // Safely extract just the drive letter (e.g. "C:") from the path
+      const root = path.parse(dirPath).root;   // e.g. "C:\\"
+      const drive = root.replace(/\\/g, '').replace(/\//g, '').toUpperCase(); // "C:"
+      // Only allow well-formed drive specifiers (letter + colon) to avoid injection
+      if (!/^[A-Z]:$/.test(drive)) return false;
+      const out = execFileSync('wmic', [
+        'logicaldisk', 'where', `DeviceID='${drive}'`, 'get', 'FileSystem', '/value',
+      ], { encoding: 'utf8', timeout: 5000 });
       return /FileSystem=FAT32/i.test(out);
     } else if (process.platform === 'linux') {
-      const out = execSync(`stat -f -c %T "${dirPath}"`, { encoding: 'utf8', timeout: 5000 });
+      // stat -f -c %T <path> prints the filesystem type (e.g. "vfat")
+      const out = execFileSync('stat', ['-f', '-c', '%T', dirPath],
+        { encoding: 'utf8', timeout: 5000 });
       return /vfat/i.test(out.trim());
     } else if (process.platform === 'darwin') {
-      const out = execSync(`diskutil info "${dirPath}" 2>/dev/null | grep "File System Personality"`, { encoding: 'utf8', timeout: 5000 });
+      const out = execFileSync('diskutil', ['info', dirPath],
+        { encoding: 'utf8', timeout: 5000 });
       return /MS-DOS FAT32/i.test(out);
     }
     return false;

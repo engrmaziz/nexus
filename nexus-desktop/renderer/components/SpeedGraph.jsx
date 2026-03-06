@@ -40,7 +40,11 @@ function SpeedGraph({ downloads = [], totalSpeed = 0 }) {
   useEffect(() => {
     function draw() {
       const canvas = canvasRef.current;
-      if (!canvas) { rafRef.current = requestAnimationFrame(draw); return; }
+      if (!canvas) {
+        // Canvas not yet mounted or already unmounted – stop the loop
+        rafRef.current = null;
+        return;
+      }
 
       const ctx    = canvas.getContext('2d');
       const w      = canvas.width;

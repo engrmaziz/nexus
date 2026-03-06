@@ -61,7 +61,15 @@ function AddDownloadModal({ onAdd, onClose, onPlaylist }) {
           ?? [];
 
         // Determine if playlist
-        const isPlaylist = trimmed.includes('playlist') || trimmed.includes('list=');
+        // Detect playlist: YouTube list= param without v= param, or explicit /playlist path
+        let isPlaylist = false;
+        try {
+          const parsedUrl = new URL(trimmed);
+          const params = parsedUrl.searchParams;
+          isPlaylist = (params.has('list') && !params.has('v'))
+            || parsedUrl.pathname === '/playlist'
+            || parsedUrl.pathname.startsWith('/playlist/');
+        } catch (_) {}
 
         setAnalysis({ type: 'video', formats, isPlaylist });
         if (!quality && formats && formats.length > 0) {

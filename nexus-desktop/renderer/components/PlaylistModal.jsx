@@ -95,8 +95,9 @@ function PlaylistModal({ onAdd, onClose }) {
   };
 
   const entryCount = info?.entries?.length || info?.entry_count || 0;
-  const estSizeGB  = info?.estimated_size_gb
-    ?? (entryCount * (quality === '4K' ? 4.0 : quality === '1080p' ? 1.2 : 0.4)).toFixed(1);
+  const estSizeGB  = info?.estimated_size_gb != null
+    ? info.estimated_size_gb
+    : (entryCount * (quality === '4K' ? 4.0 : quality === '1080p' ? 1.2 : 0.4)).toFixed(1);
 
   return (
     <div className="modal-backdrop" onClick={onClose} onKeyDown={handleKeyDown}>
