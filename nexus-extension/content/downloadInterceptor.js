@@ -1,12 +1,13 @@
 // nexus-extension/content/downloadInterceptor.js
-// Intercepts clicks on <a download> links and offers to route them through Nexus.
+// Intercepts <a download> clicks AND window.open() calls for downloadable URLs,
+// routing them through the Nexus desktop app.
 
 (function () {
   'use strict';
 
-  const LARGE_THRESHOLD = 5 * 1024 * 1024; // 5 MB
+  const DOWNLOAD_EXT_RE = /\.(zip|tar|gz|bz2|7z|rar|exe|msi|dmg|deb|rpm|apk|mp4|mkv|avi|mov|flv|webm|mp3|flac|aac|wav|ogg|pdf|iso)(\?|$)/i;
+  const SAFE_SCHEMES    = new Set(['http:', 'https:', 'ftp:']);
 
-  // Whether to always intercept downloads (can be toggled in settings)
   let alwaysIntercept = false;
 
   // Load setting
@@ -14,35 +15,73 @@
     alwaysIntercept = !!data.alwaysIntercept;
   });
 
-  document.addEventListener('click', handleClick, true);
+  // ── <a> tag interception ────────────────────────────────────────────────────
 
-  function handleClick(e) {
+  document.addEventListener('click', _handleClick, true);
+
+  function _handleClick(e) {
     const anchor = e.target.closest('a');
     if (!anchor) return;
 
     const href = anchor.href;
-    // Reject unsafe or non-downloadable URL schemes early
-    if (!href || /^(javascript:|data:|vbscript:|#)/i.test(href)) return;
+    if (!href) return;
+
+    // Reject dangerous schemes immediately
+    let scheme;
+    try {
+      scheme = new URL(href).protocol;
+    } catch (_) { return; }
+
+    if (!SAFE_SCHEMES.has(scheme)) return;
+
+    // Reject inline anchors and data URIs
+    if (/^(javascript:|data:|vbscript:|#)/i.test(href)) return;
 
     const hasDownloadAttr = anchor.hasAttribute('download');
-    const ext = getExtension(href);
-    const isDownloadExt = /\.(zip|tar|gz|bz2|7z|rar|exe|msi|dmg|deb|rpm|apk|mp4|mkv|avi|mov|flv|webm|mp3|flac|aac|pdf|iso)/i.test(ext);
-
-    // Reject dangerous URL schemes
-    try {
-      const scheme = new URL(href).protocol;
-      if (scheme !== 'http:' && scheme !== 'https:' && scheme !== 'ftp:' && scheme !== 'blob:') return;
-    } catch (_) { return; }
+    const isDownloadExt   = DOWNLOAD_EXT_RE.test(href);
 
     if (!hasDownloadAttr && !isDownloadExt && !alwaysIntercept) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    offerDownload(href, anchor.getAttribute('download') || '');
+    _offerDownload(href, anchor.getAttribute('download') || '');
   }
 
-  function offerDownload(url, suggestedName) {
+  // ── window.open() interception ──────────────────────────────────────────────
+
+  const _originalOpen = window.open.bind(window);
+
+  window.open = function (url, target, features) {
+    if (!url) return _originalOpen(url, target, features);
+
+    let scheme, parsedUrl;
+    try {
+      parsedUrl = new URL(url, location.href);
+      scheme = parsedUrl.protocol;
+    } catch (_) {
+      return _originalOpen(url, target, features);
+    }
+
+    if (!SAFE_SCHEMES.has(scheme)) return _originalOpen(url, target, features);
+
+    const fullUrl = parsedUrl.href;
+
+    if (DOWNLOAD_EXT_RE.test(fullUrl) || alwaysIntercept) {
+      // Route to Nexus instead of opening a popup window.
+      // We return null here, which deviates from the standard window.open() contract
+      // (normally returns a Window object). This is intentional: the download is handled
+      // by Nexus so no browser window needs to be created.
+      _offerDownload(fullUrl, '');
+      return null;
+    }
+
+    return _originalOpen(url, target, features);
+  };
+
+  // ── UI helper ──────────────────────────────────────────────────────────────
+
+  function _offerDownload(url, suggestedName) {
     const existing = document.getElementById('__nexus-dl-offer');
     if (existing) existing.remove();
 
@@ -62,12 +101,12 @@
 
     const urlText = document.createElement('div');
     urlText.style.cssText = 'font-size: 11px; color: #9090b0; word-break: break-all;';
-    urlText.textContent = truncate(url, 80);
+    urlText.textContent = _truncate(url, 80);
 
     const buttons = document.createElement('div');
     buttons.style.cssText = 'display: flex; gap: 8px;';
 
-    const btnNexus = makeBtn('Download with Nexus', '#6c63ff', () => {
+    const btnNexus = _makeBtn('⚡ Download with Nexus', '#6c63ff', () => {
       chrome.runtime.sendMessage({
         type: 'DOWNLOAD_URL',
         url,
@@ -76,9 +115,8 @@
       bar.remove();
     });
 
-    const btnBrowser = makeBtn('Use Browser', '#444', () => {
+    const btnBrowser = _makeBtn('Use Browser', '#444', () => {
       bar.remove();
-      // Trigger native download
       const a = document.createElement('a');
       a.href = url;
       if (suggestedName) a.download = suggestedName;
@@ -91,10 +129,10 @@
     bar.append(title, urlText, buttons);
     document.body.appendChild(bar);
 
-    setTimeout(() => bar?.remove(), 12000);
+    setTimeout(() => bar?.isConnected && bar.remove(), 15000);
   }
 
-  function makeBtn(text, bg, onClick) {
+  function _makeBtn(text, bg, onClick) {
     const btn = document.createElement('button');
     btn.textContent = text;
     btn.style.cssText = `
@@ -105,13 +143,7 @@
     return btn;
   }
 
-  function getExtension(url) {
-    try {
-      return new URL(url).pathname.match(/\.[^./?]+$/)?.[0] || '';
-    } catch (_) { return ''; }
-  }
-
-  function truncate(str, n) {
-    return str.length > n ? str.slice(0, n) + '…' : str;
+  function _truncate(str, n) {
+    return str && str.length > n ? str.slice(0, n) + '…' : (str || '');
   }
 })();
