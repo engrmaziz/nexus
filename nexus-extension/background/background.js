@@ -5,14 +5,17 @@ import { universalInterceptor } from './universalInterceptor.js';
 import { videoDetector } from './videoDetector.js';
 import { playlistDetector } from './playlistDetector.js';
 import { desktopBridge } from './desktopBridge.js';
-
-const NEXUS_PORT    = 6543;
-const NEXUS_BASE_URL = `http://127.0.0.1:${NEXUS_PORT}`;
+import { analyzeHLS, analyzeDASH, analyzeMP4, analyzeUrlFull } from './streamAnalyzer.js';
 
 // ─── Install / startup ───────────────────────────────────────────────────────
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
+// Initialize modules
+universalInterceptor.init();
+videoDetector.init();
+desktopBridge.init().catch(() => {}); // Non-fatal if desktop not running at startup
 
 // ─── Context menus ────────────────────────────────────────────────────────────
 
@@ -58,12 +61,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function handleMessage(msg, sender) {
   switch (msg.type) {
     case 'DOWNLOAD_URL':
-      await desktopBridge.sendDownload({ url: msg.url, referrer: sender.url, headers: msg.headers });
+      await desktopBridge.sendDownload({
+        url: msg.url,
+        referrer: sender.url,
+        headers: msg.headers,
+        quality: msg.quality,
+        filename: msg.filename,
+      });
       showNotification('Download Added', (msg.url || '').slice(0, 80));
+      return { ok: true };
+
+    case 'DOWNLOAD_PLAYLIST':
+      await desktopBridge.sendPlaylist({
+        url: msg.url,
+        type: msg.playlistType || 'unknown',
+        id: msg.playlistId || '',
+        quality: msg.quality,
+      });
+      showNotification('Playlist Added', (msg.url || '').slice(0, 80));
       return { ok: true };
 
     case 'DETECT_VIDEO':
       return videoDetector.detectFromTab(msg.tabId || sender.tab?.id);
+
+    case 'GET_STREAMS': {
+      const tabId = msg.tabId || sender.tab?.id;
+      const streams = videoDetector.getStreams(tabId);
+      return { streams };
+    }
+
+    case 'ANALYZE_STREAM': {
+      if (!msg.url) return { error: 'No URL provided' };
+      return analyzeUrlFull(msg.url);
+    }
+
+    case 'ANALYZE_HLS':
+      if (!msg.url) return { error: 'No URL provided' };
+      return analyzeHLS(msg.url);
+
+    case 'ANALYZE_DASH':
+      if (!msg.url) return { error: 'No URL provided' };
+      return analyzeDASH(msg.url);
+
+    case 'ANALYZE_MP4':
+      if (!msg.url) return { error: 'No URL provided' };
+      return analyzeMP4(msg.url);
 
     case 'DETECT_PLAYLIST':
       return playlistDetector.detect(msg.url || sender.url);
@@ -72,13 +114,16 @@ async function handleMessage(msg, sender) {
       return desktopBridge.ping();
 
     case 'OPEN_APP': {
+      const connected = await desktopBridge.isConnected();
+      const port = await desktopBridge.getPort();
+      const nexusBaseUrl = `http://127.0.0.1:${port || 6543}`;
       const tabs = await chrome.tabs.query({});
-      const nexusTab = tabs.find((t) => t.url && t.url.startsWith(NEXUS_BASE_URL));
+      const nexusTab = tabs.find((t) => t.url && t.url.startsWith(nexusBaseUrl));
       if (nexusTab) {
         await chrome.tabs.update(nexusTab.id, { active: true });
         await chrome.windows.update(nexusTab.windowId, { focused: true });
       } else {
-        await chrome.tabs.create({ url: NEXUS_BASE_URL });
+        await chrome.tabs.create({ url: nexusBaseUrl });
       }
       return { ok: true };
     }
@@ -87,10 +132,6 @@ async function handleMessage(msg, sender) {
       return { error: 'Unknown message type' };
   }
 }
-
-// ─── Web request interception ─────────────────────────────────────────────────
-
-universalInterceptor.init();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
