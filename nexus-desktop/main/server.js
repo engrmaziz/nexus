@@ -9,13 +9,16 @@ const fs = require('fs');
 const path = require('path');
 const { Server: SocketIO } = require('socket.io');
 
-const downloadManager = require('./engine/downloadManager');
 const ytdlpEngine = require('./engine/ytdlpEngine');
 const { getStatements } = require('./db/queries');
 const networkUtils = require('./utils/networkUtils');
 const logger = require('./utils/logger');
 const nameCleaner = require('./ai/nameCleaner');
 const categorizer = require('./ai/categorizer');
+
+// downloadManager is injected via startServer() to ensure the same instance
+// created in main.js is used here (avoids undefined / circular-dep issues).
+let downloadManager = null;
 
 const PORTS_TO_TRY = [6543, 6544, 6545];
 const VERSION = process.env.npm_package_version || '1.0.0';
@@ -197,7 +200,7 @@ app.post('/api/download', async (req, res) => {
 
     res.json({ success: true, downloadId, message: 'Download queued' });
   } catch (err) {
-    logger.error('POST /api/download failed', { err: err.message });
+    logger.error('POST /api/download failed', err.message, err.stack);
     res.status(500).json({ error: _friendlyError(err) });
   }
 });
@@ -411,6 +414,11 @@ async function start() {
   logger.error('All ports in use. Nexus API server not started.');
 }
 
+async function startServer(dm) {
+  downloadManager = dm;
+  await start();
+}
+
 function stop() {
   if (httpServer) {
     httpServer.close(() => logger.info('Nexus API server stopped'));
@@ -419,4 +427,4 @@ function stop() {
   }
 }
 
-module.exports = { app, start, stop, getActivePort: () => activePort };
+module.exports = { app, startServer, stop, getActivePort: () => activePort };
