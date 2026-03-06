@@ -68,7 +68,7 @@ const ytdlpAPI = {
   },
 };
 
-// ─── Expose ──────────────────────────────────────────────────────────────────
+// ─── Expose window.nexus (used by renderer components) ───────────────────────
 contextBridge.exposeInMainWorld('nexus', {
   window:   windowAPI,
   download: downloadAPI,
@@ -79,4 +79,57 @@ contextBridge.exposeInMainWorld('nexus', {
   ytdlp:    ytdlpAPI,
   version:  process.env.npm_package_version || '1.0.0',
   platform: process.platform,
+});
+
+// ─── Expose window.electron (Chrome-extension bridge API) ────────────────────
+contextBridge.exposeInMainWorld('electron', {
+  // Downloads
+  getDownloads:     ()       => ipcRenderer.invoke('get-downloads'),
+  getDownload:      (id)     => ipcRenderer.invoke('get-download', id),
+  addDownload:      (data)   => ipcRenderer.invoke('add-download', data),
+  pauseDownload:    (id)     => ipcRenderer.invoke('pause-download', id),
+  resumeDownload:   (id)     => ipcRenderer.invoke('resume-download', id),
+  cancelDownload:   (id)     => ipcRenderer.invoke('cancel-download', id),
+  retryDownload:    (id)     => ipcRenderer.invoke('retry-download', id),
+  removeDownload:   (id)     => ipcRenderer.invoke('remove-download', id),
+  pauseAll:         ()       => ipcRenderer.invoke('pause-all'),
+  resumeAll:        ()       => ipcRenderer.invoke('resume-all'),
+
+  // Playlist / formats
+  getPlaylistInfo:  (url)    => ipcRenderer.invoke('get-playlist-info', url),
+  downloadPlaylist: (data)   => ipcRenderer.invoke('download-playlist', data),
+  getVideoFormats:  (url)    => ipcRenderer.invoke('get-video-formats', url),
+
+  // Settings
+  getSettings:      ()           => ipcRenderer.invoke('get-settings'),
+  setSetting:       (key, val)   => ipcRenderer.invoke('set-setting', key, val),
+
+  // Stats
+  getStats:         ()       => ipcRenderer.invoke('get-stats'),
+
+  // Shell / dialog
+  browseFolder:     ()       => ipcRenderer.invoke('browse-folder'),
+  openFile:         (path)   => ipcRenderer.invoke('open-file', path),
+  openFolder:       (path)   => ipcRenderer.invoke('open-folder', path),
+
+  // yt-dlp
+  checkYtdlp:       ()       => ipcRenderer.invoke('check-ytdlp'),
+  installYtdlp:     ()       => ipcRenderer.invoke('install-ytdlp'),
+
+  // AI Scheduler
+  getAiSchedule:    ()       => ipcRenderer.invoke('get-ai-schedule'),
+
+  // Event listeners for download state changes
+  onProgress: (cb) => ipcRenderer.on('dl:progress', (_event, d) => cb(d)),
+  onComplete: (cb) => ipcRenderer.on('dl:complete', (_event, d) => cb(d)),
+  onError:    (cb) => ipcRenderer.on('dl:error',    (_event, d) => cb(d)),
+  onNew:      (cb) => ipcRenderer.on('dl:new',      (_event, d) => cb(d)),
+  onPaused:   (cb) => ipcRenderer.on('dl:paused',   (_event, d) => cb(d)),
+
+  removeAllListeners: (ch) => ipcRenderer.removeAllListeners(ch),
+
+  // Window controls
+  minimize: () => ipcRenderer.send('window-minimize'),
+  maximize: () => ipcRenderer.send('window-maximize'),
+  close:    () => ipcRenderer.send('window-close'),
 });
