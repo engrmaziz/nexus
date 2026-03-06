@@ -63,11 +63,13 @@ async function handleMessage(msg, sender) {
     case 'DOWNLOAD_URL': {
       try {
         await desktopBridge.sendDownload({
-          url: msg.url,
-          referrer: sender.url,
-          headers: msg.headers,
-          quality: msg.quality,
-          filename: msg.filename,
+          url:       msg.url,
+          referrer:  sender.url,
+          headers:   msg.headers,
+          quality:   msg.quality,
+          filename:  msg.filename,
+          pageTitle: msg.pageTitle || '',
+          pageUrl:   msg.pageUrl   || sender.url || '',
         });
         showNotification('Download Added', (msg.url || '').slice(0, 80));
         return { ok: true };
