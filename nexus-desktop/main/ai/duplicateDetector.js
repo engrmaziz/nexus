@@ -3,7 +3,24 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const leven = require('leven');
+// Inline Levenshtein distance – drop-in replacement for the ESM-only leven package.
+// Uses a single rolling array (O(min(m,n)) space) by ensuring `a` is the shorter string.
+function leven(a, b) {
+  if (a === b) return 0;
+  if (a.length > b.length) { const t = a; a = b; b = t; }
+  if (a.length === 0) return b.length;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => i);
+  for (let j = 1; j <= b.length; j++) {
+    let prev = dp[0];
+    dp[0] = j;
+    for (let i = 1; i <= a.length; i++) {
+      const temp = dp[i];
+      dp[i] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[i], dp[i - 1]);
+      prev = temp;
+    }
+  }
+  return dp[a.length];
+}
 const logger = require('../utils/logger');
 
 const HASH_BLOCK = 65536; // 64 KB block for quick hash
