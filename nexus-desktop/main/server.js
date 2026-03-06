@@ -143,6 +143,12 @@ app.post('/api/download', async (req, res) => {
 
   // 1. Validate URL
   if (!url) return res.status(400).json({ error: 'url is required' });
+
+  // Validate downloadManager is ready
+  if (!downloadManager) {
+    return res.status(503).json({ error: 'Download manager not ready' });
+  }
+
   let parsedUrl;
   try {
     parsedUrl = new URL(url);
@@ -154,8 +160,12 @@ app.post('/api/download', async (req, res) => {
     // 2. Determine download type
     let resolvedType = type;
     if (!resolvedType) {
+      const urlHost = parsedUrl.hostname.toLowerCase();
       if (stream) {
         resolvedType = stream.type === 'hls' ? 'hls' : (stream.type === 'dash' ? 'dash' : 'video');
+      } else if (urlHost === 'youtube.com' || urlHost === 'www.youtube.com' ||
+                 urlHost === 'youtu.be' || urlHost === 'm.youtube.com') {
+        resolvedType = 'yt';
       } else if (mimeType) {
         if (mimeType.startsWith('video/') || mimeType.startsWith('application/x-mpegURL')) {
           resolvedType = 'video';
@@ -172,7 +182,20 @@ app.post('/api/download', async (req, res) => {
     }
 
     // 3. AI Smart Naming
-    const rawName = filename || pageTitle || path.basename(parsedUrl.pathname) || 'download';
+    // Prefer pageTitle over filename; never fall back to a bare URL path segment
+    // that would be meaningless as a filename (e.g. "watch" for youtube.com/watch?v=xxx).
+    // We also skip a filename that merely echoes the URL basename (it adds no information
+    // beyond what we'd get from the URL itself) to avoid redundant/unhelpful names.
+    const urlBasename = path.basename(parsedUrl.pathname);
+    const isMeaninglessBasename = !urlBasename || urlBasename === 'watch' ||
+      urlBasename === 'video' || urlBasename === 'embed' || urlBasename === 'v';
+    // Use provided filename only when it differs from the URL's own basename, meaning
+    // it was explicitly set (e.g. from a Content-Disposition header) rather than derived
+    // directly from the URL path.
+    const rawName = pageTitle ||
+      (filename && filename !== urlBasename ? filename : '') ||
+      (!isMeaninglessBasename ? urlBasename : '') ||
+      'download';
     const cleanName = nameCleaner.cleanFromUrl
       ? nameCleaner.cleanFromUrl(rawName, url, { quality, pageTitle })
       : nameCleaner.clean(rawName);
@@ -183,19 +206,22 @@ app.post('/api/download', async (req, res) => {
       : { category: categorizer.categorize(cleanName, mimeType, url), suggestedFolder: null };
 
     // 5. Add to download queue
-    const isVideo = resolvedType === 'video' || resolvedType === 'hls' || resolvedType === 'dash' || resolvedType === 'audio';
+    const isVideo = resolvedType === 'video' || resolvedType === 'hls' ||
+      resolvedType === 'dash' || resolvedType === 'audio' || resolvedType === 'yt';
     const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
     const downloadId = await addFn({
-      url: (stream && stream.url) || url,
+      url:      (stream && stream.url) || url,
       filename: cleanName,
       fileSize: fileSize || 0,
       mimeType: mimeType || '',
-      type: resolvedType,
+      type:     resolvedType,
       referrer: pageUrl || '',
-      isYtdlp: isVideo,
-      quality: quality || (isVideo ? 'best' : null),
+      isYtdlp:  isVideo,
+      quality:  quality || (isVideo ? 'best' : null),
       category: catResult.category,
-      saveDir: catResult.suggestedFolder || undefined,
+      saveDir:  catResult.suggestedFolder || undefined,
+      pageTitle: pageTitle || '',
+      pageUrl:   pageUrl   || '',
     });
 
     res.json({ success: true, downloadId, message: 'Download queued' });

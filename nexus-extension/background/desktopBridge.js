@@ -123,20 +123,25 @@ export const desktopBridge = {
 
   /**
    * Send a download task to the desktop app.
-   * @param {object} opts  { url, referrer?, headers?, filename?, saveDir?, quality?, contentType?, size? }
+   * @param {object} opts  { url, referrer?, headers?, filename?, saveDir?, quality?, mimeType?, fileSize?, pageTitle?, type? }
    * @returns {Promise<{ id: string }>}
    */
   async sendDownload(opts) {
-    const { url, referrer, headers, filename, saveDir, quality, contentType, size } = opts;
+    const { url, referrer, headers, filename, saveDir, quality,
+            mimeType, fileSize, pageTitle, type,
+            // Legacy field aliases kept for backward compatibility
+            contentType, size } = opts;
     return _apiRequest('POST', '/api/download', {
       url,
-      referrer: referrer || '',
-      headers: headers || {},
-      filename: filename || '',
-      saveDir: saveDir || '',
-      quality: quality || '',
-      contentType: contentType || '',
-      size: size || 0,
+      referrer:  referrer  || '',
+      headers:   headers   || {},
+      filename:  filename  || '',
+      saveDir:   saveDir   || '',
+      quality:   quality   || '',
+      mimeType:  mimeType  || contentType || '',
+      fileSize:  fileSize  || size || 0,
+      pageTitle: pageTitle || '',
+      type:      type      || '',
     });
   },
 
