@@ -111,6 +111,8 @@
         type: 'DOWNLOAD_URL',
         url,
         filename: suggestedName || undefined,
+        pageTitle: document.title || '',
+        pageUrl: window.location.href || '',
       });
       bar.remove();
     });
