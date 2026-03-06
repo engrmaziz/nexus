@@ -6,6 +6,9 @@ import { videoDetector } from './videoDetector.js';
 import { playlistDetector } from './playlistDetector.js';
 import { desktopBridge } from './desktopBridge.js';
 
+const NEXUS_PORT    = 6543;
+const NEXUS_BASE_URL = `http://127.0.0.1:${NEXUS_PORT}`;
+
 // ─── Install / startup ───────────────────────────────────────────────────────
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -68,6 +71,18 @@ async function handleMessage(msg, sender) {
     case 'GET_NEXUS_STATUS':
       return desktopBridge.ping();
 
+    case 'OPEN_APP': {
+      const tabs = await chrome.tabs.query({});
+      const nexusTab = tabs.find((t) => t.url && t.url.startsWith(NEXUS_BASE_URL));
+      if (nexusTab) {
+        await chrome.tabs.update(nexusTab.id, { active: true });
+        await chrome.windows.update(nexusTab.windowId, { focused: true });
+      } else {
+        await chrome.tabs.create({ url: NEXUS_BASE_URL });
+      }
+      return { ok: true };
+    }
+
     default:
       return { error: 'Unknown message type' };
   }
@@ -82,7 +97,7 @@ universalInterceptor.init();
 function showNotification(title, message, type = 'success') {
   chrome.notifications.create(`nexus-${Date.now()}`, {
     type: 'basic',
-    iconUrl: '../icons/icon48.png',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
     title,
     message: message || '',
     priority: type === 'error' ? 2 : 0,

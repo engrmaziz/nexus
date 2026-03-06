@@ -1,16 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "Nexus Downloader",
+  "name": "Nexus Download Manager",
   "version": "1.0.0",
-  "description": "Send any download or video to Nexus Download Manager",
+  "description": "Supercharge every download. Every file. Every video site.",
   "permissions": [
+    "webRequest",
+    "declarativeNetRequest",
     "activeTab",
     "scripting",
-    "webRequest",
     "storage",
+    "tabs",
     "notifications",
-    "contextMenus",
-    "tabs"
+    "downloads",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -46,8 +48,9 @@
       "48":  "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Nexus Downloader"
+    "default_title": "Nexus Download Manager"
   },
+  "options_page": "options/options.html",
   "icons": {
     "16":  "icons/icon16.png",
     "48":  "icons/icon48.png",

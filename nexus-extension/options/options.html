@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexus Download Manager — Settings</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f0f23;
+      --surface:  #1a1a35;
+      --border:   #2e2e5a;
+      --accent:   #6c63ff;
+      --text:     #e8e8f0;
+      --muted:    #9090b0;
+      --success:  #4ade80;
+      --error:    #f87171;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      padding: 0;
+    }
+
+    .container {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header-logo { font-size: 28px; }
+    .header-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .header-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Section ── */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 16px;
+    }
+
+    /* ── Setting row ── */
+    .setting-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { font-size: 13px; font-weight: 600; }
+    .setting-desc  { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    /* ── Toggle ── */
+    .toggle {
+      position: relative;
+      flex-shrink: 0;
+      width: 40px;
+      height: 22px;
+      margin-top: 2px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 11px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 16px; height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .2s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--accent); }
+    .toggle input:checked + .toggle-track::after { transform: translateX(18px); }
+
+    /* ── Text input ── */
+    .text-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 13px;
+      width: 220px;
+      outline: none;
+    }
+    .text-input:focus { border-color: var(--accent); }
+
+    /* ── Number input ── */
+    .num-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 13px;
+      width: 80px;
+      outline: none;
+      text-align: right;
+    }
+    .num-input:focus { border-color: var(--accent); }
+
+    /* ── Buttons ── */
+    .btn-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 24px;
+    }
+    .btn {
+      padding: 9px 20px;
+      border-radius: 7px;
+      border: none;
+      font: 600 13px/1 -apple-system, sans-serif;
+      cursor: pointer;
+    }
+    .btn-primary  { background: var(--accent); color: #fff; }
+    .btn-primary:hover  { opacity: .85; }
+    .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--border); }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--success);
+      color: #0f0f23;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.4);
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity .2s, transform .2s;
+      pointer-events: none;
+    }
+    #toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-logo">⬡</div>
+      <div>
+        <div class="header-title">Nexus Download Manager</div>
+        <div class="header-sub">Extension Settings</div>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="section">
+      <div class="section-title">Connection</div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Desktop app port</div>
+          <div class="setting-desc">The port Nexus desktop app listens on (default: 6543)</div>
+        </div>
+        <input id="port" type="number" class="num-input" min="1024" max="65535" value="6543" />
+      </div>
+    </div>
+
+    <!-- Download behaviour -->
+    <div class="section">
+      <div class="section-title">Download Behaviour</div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Always intercept downloads</div>
+          <div class="setting-desc">Capture every browser download and offer to send it to Nexus</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="alwaysIntercept" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Show video download buttons</div>
+          <div class="setting-desc">Inject download buttons over video elements on every page</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="showVideoButtons" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Auto-detect playlists</div>
+          <div class="setting-desc">Show the "Download Playlist" button on YouTube, Vimeo, etc.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="autoPlaylist" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Default save location</div>
+          <div class="setting-desc">Override the Nexus app's default save directory (leave blank to use app default)</div>
+        </div>
+        <input id="saveDir" type="text" class="text-input" placeholder="e.g. /home/user/Downloads" />
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="section">
+      <div class="section-title">Notifications</div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Show download-added notifications</div>
+          <div class="setting-desc">Desktop notification when a download is sent to Nexus</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifyAdded" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Show completion notifications</div>
+          <div class="setting-desc">Desktop notification when a download finishes</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notifyCompleted" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="btn-row">
+      <button id="reset-btn" class="btn btn-secondary">Reset to defaults</button>
+      <button id="save-btn"  class="btn btn-primary">Save settings</button>
+    </div>
+  </div>
+
+  <div id="toast">✔ Settings saved</div>
+  <script src="options.js"></script>
+</body>
+</html>
