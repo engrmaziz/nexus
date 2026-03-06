@@ -90,8 +90,9 @@ app.whenReady().then(async () => {
     ytdlpInstaller.install().catch((err) => logger.warn('yt-dlp install failed', { err: err.message }));
   }
 
-  // Start Express API server
-  server.start();
+  // Start Express API server (pass the downloadManager instance so server.js
+  // uses the same object used by IPC handlers and event listeners here)
+  server.startServer(downloadManager);
 
   createMainWindow();
   createTray();
