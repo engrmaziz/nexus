@@ -5,30 +5,272 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { EventEmitter } = require('events');
-const { parse: parseMpd } = require('mpd-parser');
+const { XMLParser } = require('fast-xml-parser');
+const pLimit = require('p-limit');
 const MergeEngine = require('./mergeEngine');
 const SpeedTracker = require('./speedTracker');
 const logger = require('../utils/logger');
 
+const VIDEO_CONCURRENCY = 8;
+const AUDIO_CONCURRENCY = 8;
+const SEGMENT_RETRIES   = 3;
+const FETCH_TIMEOUT     = 20_000;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function resolveUrl(uri, base) {
+  if (/^https?:\/\//i.test(uri)) return uri;
+  const b = new URL(base);
+  if (uri.startsWith('//')) return `${b.protocol}${uri}`;
+  if (uri.startsWith('/')) return `${b.protocol}//${b.host}${uri}`;
+  const dir = b.pathname.split('/').slice(0, -1).join('/');
+  return `${b.protocol}//${b.host}${dir}/${uri}`;
+}
+
+function fetchText(url, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(
+      url,
+      {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NexusDownloader/1.0)', ...extraHeaders },
+        timeout: FETCH_TIMEOUT,
+      },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(fetchText(res.headers.location, extraHeaders));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+        }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (c) => (body += c));
+        res.on('end', () => resolve(body));
+        res.on('error', reject);
+      }
+    ).on('error', reject)
+     .on('timeout', function () { this.destroy(new Error(`Timeout fetching ${url}`)); });
+  });
+}
+
+async function fetchBuffer(url, extraHeaders = {}, retries = SEGMENT_RETRIES) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await _fetchBufferOnce(url, extraHeaders);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      const delay = 500 * Math.pow(2, attempt);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+function _fetchBufferOnce(url, extraHeaders) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(
+      url,
+      {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NexusDownloader/1.0)', ...extraHeaders },
+        timeout: FETCH_TIMEOUT,
+      },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(_fetchBufferOnce(res.headers.location, extraHeaders));
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+        }
+        const bufs = [];
+        res.on('data', (c) => bufs.push(c));
+        res.on('end', () => resolve(Buffer.concat(bufs)));
+        res.on('error', reject);
+      }
+    ).on('error', reject)
+     .on('timeout', function () { this.destroy(new Error(`Timeout fetching ${url}`)); });
+  });
+}
+
+// ─── MPD Parser ───────────────────────────────────────────────────────────────
+
+const XML_PARSER = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  isArray: (name) => ['Period', 'AdaptationSet', 'Representation', 'SegmentURL', 'S'].includes(name),
+});
+
 /**
- * DashEngine – downloads a DASH (MPD) adaptive stream.
+ * Parse an MPD XML document and extract segment URLs.
+ * Returns: { videoSegments: string[], audioSegments: string[] }
+ */
+function parseMpd(mpdText, mpdUrl, requestedHeight = null) {
+  const doc = XML_PARSER.parse(mpdText);
+  const mpd = doc.MPD || {};
+  const periods = Array.isArray(mpd.Period) ? mpd.Period : [mpd.Period].filter(Boolean);
+
+  if (!periods.length) throw new Error('No Period found in MPD');
+
+  const period = periods[0];
+  const adaptations = Array.isArray(period.AdaptationSet)
+    ? period.AdaptationSet
+    : [period.AdaptationSet].filter(Boolean);
+
+  const videoAdaptations = adaptations.filter(
+    (a) => (a['@_contentType'] || a['@_mimeType'] || '').includes('video')
+  );
+  const audioAdaptations = adaptations.filter(
+    (a) => (a['@_contentType'] || a['@_mimeType'] || '').includes('audio')
+  );
+
+  // If no explicit content type, use codecs
+  const allAdaptations = videoAdaptations.length === 0 && audioAdaptations.length === 0
+    ? adaptations
+    : null;
+
+  const videoSegs  = _extractSegments(videoAdaptations.length ? videoAdaptations : adaptations.slice(0, 1), mpdUrl, requestedHeight);
+  const audioSegs  = _extractSegments(audioAdaptations, mpdUrl, null);
+
+  return { videoSegments: videoSegs, audioSegments: audioSegs };
+}
+
+function _extractSegments(adaptations, mpdUrl, requestedHeight) {
+  if (!adaptations || !adaptations.length) return [];
+
+  // Pick best representation (highest bandwidth that fits requested height)
+  let bestRep = null;
+  let bestBandwidth = 0;
+
+  for (const adaptation of adaptations) {
+    const reps = Array.isArray(adaptation.Representation)
+      ? adaptation.Representation
+      : [adaptation.Representation].filter(Boolean);
+
+    for (const rep of reps) {
+      const bw = parseInt(rep['@_bandwidth'] || '0', 10);
+      const h = parseInt(rep['@_height'] || '0', 10);
+
+      if (requestedHeight && h > requestedHeight + 20) continue;
+
+      if (bw > bestBandwidth || !bestRep) {
+        bestBandwidth = bw;
+        bestRep = { rep, adaptation };
+      }
+    }
+  }
+
+  if (!bestRep) return [];
+
+  const { rep, adaptation } = bestRep;
+  const baseUrl = _getBaseUrl(rep, adaptation, mpdUrl);
+
+  // SegmentList
+  if (rep.SegmentList || adaptation.SegmentList) {
+    const sl = rep.SegmentList || adaptation.SegmentList;
+    const urls = Array.isArray(sl.SegmentURL)
+      ? sl.SegmentURL
+      : [sl.SegmentURL].filter(Boolean);
+
+    return urls.map((su) => resolveUrl(su['@_media'] || su['@_mediaRange'] || '', baseUrl));
+  }
+
+  // SegmentTemplate with $Number$ or $Time$
+  const template = rep.SegmentTemplate || adaptation.SegmentTemplate;
+  if (template) {
+    const media = template['@_media'] || '';
+    const initAttr = template['@_initialization'] || '';
+    const startNum = parseInt(template['@_startNumber'] || '1', 10);
+    const timescale = parseInt(template['@_timescale'] || '1', 10);
+    const duration = parseInt(template['@_duration'] || '0', 10);
+
+    const segs = [];
+
+    if (initAttr) {
+      const initUrl = initAttr
+        .replace('$RepresentationID$', rep['@_id'] || '')
+        .replace('$Bandwidth$', rep['@_bandwidth'] || '');
+      segs.push(resolveUrl(initUrl, baseUrl));
+    }
+
+    // SegmentTimeline
+    if (template.SegmentTimeline) {
+      const ss = Array.isArray(template.SegmentTimeline.S)
+        ? template.SegmentTimeline.S
+        : [template.SegmentTimeline.S].filter(Boolean);
+
+      let number = startNum;
+      let time = 0;
+      for (const s of ss) {
+        if (s['@_t'] !== undefined) time = parseInt(s['@_t'], 10);
+        const repeat = parseInt(s['@_r'] || '0', 10) + 1;
+        const segDuration = parseInt(s['@_d'], 10);
+
+        for (let i = 0; i < repeat; i++) {
+          const segUrl = media
+            .replace('$RepresentationID$', rep['@_id'] || '')
+            .replace('$Bandwidth$', rep['@_bandwidth'] || '')
+            .replace('$Number$', String(number))
+            .replace('$Time$', String(time));
+          segs.push(resolveUrl(segUrl, baseUrl));
+          number++;
+          time += segDuration;
+        }
+      }
+    } else if (duration > 0) {
+      // Use mediaPresentationDuration to figure out count
+      // Approximate: just generate 1000 segments and stop at 404 (handled in download)
+      const approxCount = 1000;
+      for (let i = startNum; i < startNum + approxCount; i++) {
+        const segUrl = media
+          .replace('$RepresentationID$', rep['@_id'] || '')
+          .replace('$Bandwidth$', rep['@_bandwidth'] || '')
+          .replace('$Number$', String(i));
+        segs.push(resolveUrl(segUrl, baseUrl));
+      }
+    }
+
+    return segs;
+  }
+
+  // No recognised segment scheme – try base URL as a single file
+  return baseUrl ? [baseUrl] : [];
+}
+
+function _getBaseUrl(rep, adaptation, mpdUrl) {
+  // Prefer explicit BaseURL element, then fall back to MPD location
+  const repBase = rep.BaseURL;
+  const adaptBase = adaptation.BaseURL;
+  if (repBase) return resolveUrl(String(repBase), mpdUrl);
+  if (adaptBase) return resolveUrl(String(adaptBase), mpdUrl);
+  return mpdUrl;
+}
+
+// ─── DashEngine ───────────────────────────────────────────────────────────────
+
+/**
+ * DashEngine – downloads a DASH/MPD adaptive stream.
  *
- * Strategy:
- *  1. Fetch and parse the MPD manifest.
- *  2. Pick the highest-quality video and audio AdaptationSets.
- *  3. Download all segments in parallel (bounded concurrency).
- *  4. Merge video + audio with FFmpeg.
- *
- * Emits: 'progress', 'complete', 'error'
+ * Emits: 'progress' { downloaded, total, speed, progress, eta }
+ *        'complete'
+ *        'error'
  */
 class DashEngine extends EventEmitter {
+  /**
+   * @param {object}  opts
+   * @param {string}  opts.url          MPD manifest URL.
+   * @param {string}  opts.outputFile
+   * @param {string}  opts.tempDir
+   * @param {object}  [opts.headers]
+   * @param {string}  [opts.quality]    e.g. '1080p' – restricts max height.
+   */
   constructor(opts) {
     super();
     this.url = opts.url;
     this.outputFile = opts.outputFile;
     this.tempDir = opts.tempDir;
     this.headers = opts.headers || {};
-    this.concurrency = opts.concurrency || 8;
+    this.quality = opts.quality || 'best';
     this._aborted = false;
     this._paused = false;
     this.speedTracker = new SpeedTracker();
@@ -36,56 +278,50 @@ class DashEngine extends EventEmitter {
 
   async start() {
     try {
-      const mpdText = await this._fetchText(this.url);
-      const parsed = parseMpd(mpdText, { manifestUri: this.url });
+      await fs.promises.mkdir(this.tempDir, { recursive: true });
 
-      const videoPlaylist = this._pickBestVideoPlaylist(parsed);
-      const audioPlaylist = this._pickBestAudioPlaylist(parsed);
+      // 1. Fetch and parse MPD
+      const mpdText = await fetchText(this.url, this.headers);
+      const requestedHeight = this._parseQualityHeight();
+      const { videoSegments, audioSegments } = parseMpd(mpdText, this.url, requestedHeight);
 
-      if (!videoPlaylist) throw new Error('No video stream found in DASH manifest');
-
-      const videoSegments = this._getSegments(videoPlaylist);
-      const audioSegments = audioPlaylist ? this._getSegments(audioPlaylist) : [];
+      if (!videoSegments.length) throw new Error('No video segments found in DASH manifest');
 
       const total = videoSegments.length + audioSegments.length;
       let done = 0;
 
-      const updateProgress = (bytes) => {
+      const onSegment = (bytes) => {
         done++;
-        this.speedTracker.update(bytes);
-        this.emit('progress', {
-          downloaded: done,
-          total,
-          speed: this.speedTracker.getSpeed(),
-          progress: total > 0 ? Math.min(100, (done / total) * 100) : 0,
-        });
+        this.speedTracker.addSample(bytes);
+        const speed = this.speedTracker.getSpeed();
+        const progress = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+        this.emit('progress', { downloaded: done, total, speed, progress, eta: 0 });
       };
 
-      // Download video segments
+      // 2. Download video segments
       const videoDir = path.join(this.tempDir, 'video');
-      fs.mkdirSync(videoDir, { recursive: true });
-      await this._downloadSegments(videoSegments, videoDir, updateProgress);
+      await fs.promises.mkdir(videoDir, { recursive: true });
+      await this._downloadSegments(videoSegments, videoDir, onSegment, VIDEO_CONCURRENCY);
 
-      // Download audio segments
+      // 3. Download audio segments
       const audioDir = path.join(this.tempDir, 'audio');
-      if (audioSegments.length > 0) {
-        fs.mkdirSync(audioDir, { recursive: true });
-        await this._downloadSegments(audioSegments, audioDir, updateProgress);
+      let hasAudio = audioSegments.length > 0;
+      if (hasAudio) {
+        await fs.promises.mkdir(audioDir, { recursive: true });
+        await this._downloadSegments(audioSegments, audioDir, onSegment, AUDIO_CONCURRENCY);
       }
 
-      // Concatenate segments for each track
+      // 4. Concatenate each track
       const videoFile = path.join(this.tempDir, 'video_combined.mp4');
-      const audioFile = path.join(this.tempDir, 'audio_combined.mp4');
-
-      await this._concatSegments(videoDir, videoFile);
-      if (audioSegments.length > 0) {
-        await this._concatSegments(audioDir, audioFile);
-      }
-
-      // Merge video + audio
+      const audioFile = path.join(this.tempDir, 'audio_combined.m4a');
       const merger = new MergeEngine();
-      if (audioSegments.length > 0) {
-        await merger.mergeVideoAudio(videoFile, audioFile, this.outputFile);
+
+      await this._concatDir(videoDir, videoFile);
+      if (hasAudio) await this._concatDir(audioDir, audioFile);
+
+      // 5. Merge video + audio
+      if (hasAudio) {
+        await merger.mergeAudioVideo(videoFile, audioFile, this.outputFile);
       } else {
         fs.renameSync(videoFile, this.outputFile);
       }
@@ -101,127 +337,76 @@ class DashEngine extends EventEmitter {
   resume() { this._paused = false; }
   abort() { this._aborted = true; this._paused = true; }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Internals
-  // ──────────────────────────────────────────────────────────────────────
+  // ─── Internals ────────────────────────────────────────────────────────
 
-  _pickBestVideoPlaylist(parsed) {
-    const playlists = parsed.playlists || [];
-    const video = playlists.filter(
-      (p) => p.attributes && p.attributes.CODECS && !p.attributes.CODECS.startsWith('mp4a')
-    );
-    if (video.length === 0) return playlists[0] || null;
-    return video.sort(
-      (a, b) => (b.attributes.BANDWIDTH || 0) - (a.attributes.BANDWIDTH || 0)
-    )[0];
+  _parseQualityHeight() {
+    if (!this.quality || this.quality === 'best') return null;
+    const m = /(\d+)p/.exec(this.quality);
+    return m ? parseInt(m[1], 10) : null;
   }
 
-  _pickBestAudioPlaylist(parsed) {
-    const mediaGroups = parsed.mediaGroups?.AUDIO;
-    if (!mediaGroups) return null;
-    for (const groupId of Object.keys(mediaGroups)) {
-      for (const lang of Object.keys(mediaGroups[groupId])) {
-        const track = mediaGroups[groupId][lang];
-        if (track.playlists && track.playlists.length > 0) {
-          return track.playlists[0];
+  async _downloadSegments(urls, dir, onSegment, concurrency) {
+    const limit = pLimit(concurrency);
+    const tasks = urls.map((url, idx) =>
+      limit(async () => {
+        if (this._aborted) return;
+        while (this._paused && !this._aborted) await new Promise((r) => setTimeout(r, 300));
+        if (this._aborted) return;
+
+        const ext = path.extname(new URL(url).pathname) || '.m4s';
+        const outFile = path.join(dir, `seg_${String(idx).padStart(6, '0')}${ext}`);
+
+        if (fs.existsSync(outFile)) {
+          onSegment(0);
+          return;
         }
-      }
-    }
-    return null;
+
+        let buf;
+        try {
+          buf = await fetchBuffer(url, this.headers);
+        } catch (err) {
+          // For template-based streams we might generate too many segments
+          if (err.message.includes('HTTP 404')) return;
+          throw err;
+        }
+
+        fs.writeFileSync(outFile, buf);
+        onSegment(buf.length);
+      })
+    );
+
+    await Promise.all(tasks);
   }
 
-  _getSegments(playlist) {
-    return (playlist.segments || []).map((s) => s.resolvedUri || s.uri);
-  }
-
-  async _downloadSegments(urls, dir, onSegment) {
-    const batches = [];
-    for (let i = 0; i < urls.length; i += this.concurrency) {
-      batches.push(urls.slice(i, i + this.concurrency));
-    }
-
-    let idx = 0;
-    for (const batch of batches) {
-      if (this._aborted) return;
-      while (this._paused && !this._aborted) await new Promise((r) => setTimeout(r, 300));
-
-      await Promise.all(
-        batch.map(async (url) => {
-          const localIdx = idx++;
-          const outFile = path.join(dir, `seg_${String(localIdx).padStart(6, '0')}.m4s`);
-          if (fs.existsSync(outFile)) { onSegment(0); return; }
-          const buf = await this._fetchBuffer(url);
-          fs.writeFileSync(outFile, buf);
-          onSegment(buf.length);
-        })
-      );
-    }
-  }
-
-  async _concatSegments(dir, outFile) {
+  async _concatDir(dir, outFile) {
     const files = fs.readdirSync(dir)
-      .filter((f) => f.endsWith('.m4s') || f.endsWith('.mp4'))
+      .filter((f) => /\.(m4s|mp4|ts|m4a|aac)$/.test(f))
       .sort()
       .map((f) => path.join(dir, f));
 
-    const ws = fs.createWriteStream(outFile);
-    for (const f of files) {
-      await new Promise((resolve, reject) => {
-        const rs = fs.createReadStream(f);
-        rs.pipe(ws, { end: false });
-        rs.on('end', resolve);
-        rs.on('error', reject);
-      });
-    }
-    await new Promise((resolve) => ws.end(resolve));
-  }
+    if (files.length === 0) throw new Error(`No segment files in ${dir}`);
 
-  _fetchText(url) {
-    return new Promise((resolve, reject) => {
-      const mod = url.startsWith('https') ? https : http;
-      let body = '';
-      mod.get(url, { headers: this.headers }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          return resolve(this._fetchText(res.headers.location));
-        }
-        res.setEncoding('utf8');
-        res.on('data', (c) => (body += c));
-        res.on('end', () => resolve(body));
-        res.on('error', reject);
-      }).on('error', reject);
-    });
-  }
-
-  _fetchBuffer(url) {
-    return new Promise((resolve, reject) => {
-      const mod = url.startsWith('https') ? https : http;
-      const chunks = [];
-      mod.get(url, { headers: this.headers }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          return resolve(this._fetchBuffer(res.headers.location));
-        }
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-        res.on('error', reject);
-      }).on('error', reject);
-    });
+    const merger = new MergeEngine();
+    await merger.concatSegments(files, outFile);
   }
 
   _cleanup() {
     try {
-      const dirs = ['video', 'audio'].map((d) => path.join(this.tempDir, d));
-      for (const dir of dirs) {
-        if (fs.existsSync(dir)) {
-          for (const f of fs.readdirSync(dir)) {
-            try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
-          }
-          try { fs.rmdirSync(dir); } catch (_) {}
+      const dirs = [
+        path.join(this.tempDir, 'video'),
+        path.join(this.tempDir, 'audio'),
+      ];
+      for (const d of dirs) {
+        if (!fs.existsSync(d)) continue;
+        for (const f of fs.readdirSync(d)) {
+          try { fs.unlinkSync(path.join(d, f)); } catch (_) {}
         }
+        try { fs.rmdirSync(d); } catch (_) {}
       }
-      const tmpFiles = ['video_combined.mp4', 'audio_combined.mp4'];
+      const tmpFiles = ['video_combined.mp4', 'audio_combined.m4a'];
       for (const f of tmpFiles) {
         const fp = path.join(this.tempDir, f);
-        if (fs.existsSync(fp)) try { fs.unlinkSync(fp); } catch (_) {}
+        if (fs.existsSync(fp)) { try { fs.unlinkSync(fp); } catch (_) {} }
       }
     } catch (_) {}
   }
