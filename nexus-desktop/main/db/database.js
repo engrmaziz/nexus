@@ -164,6 +164,8 @@ const SCHEMA_SQL = `
 
 /**
  * Open (or create) the SQLite database.
+ * Edge case [14]: On startup, run PRAGMA integrity_check.
+ * If corruption detected: backup the corrupt DB and create a fresh one.
  * Returns the singleton db instance.
  */
 function openDatabase() {
@@ -171,6 +173,35 @@ function openDatabase() {
 
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  // Try to open and integrity-check the existing DB
+  if (fs.existsSync(DB_PATH)) {
+    let integrityOk = false;
+    try {
+      const testDb = new BetterSqlite3(DB_PATH, { verbose: null });
+      const result = testDb.pragma('integrity_check');
+      integrityOk = Array.isArray(result)
+        ? result[0]?.integrity_check === 'ok'
+        : String(result) === 'ok';
+      testDb.close();
+    } catch (err) {
+      logger.error('DB integrity check failed to run', { err: err.message });
+      integrityOk = false;
+    }
+
+    if (!integrityOk) {
+      // Backup corrupt database and start fresh
+      const backupPath = `${DB_PATH}.corrupt.${Date.now()}`;
+      try {
+        fs.renameSync(DB_PATH, backupPath);
+        logger.error('Database corruption detected – backed up and starting fresh', { backupPath });
+      } catch (renameErr) {
+        logger.error('Failed to backup corrupt DB', { err: renameErr.message });
+        // Try to delete it so we can create a fresh one
+        try { fs.unlinkSync(DB_PATH); } catch (_) {}
+      }
+    }
+  }
 
   _db = new BetterSqlite3(DB_PATH, { verbose: null });
 

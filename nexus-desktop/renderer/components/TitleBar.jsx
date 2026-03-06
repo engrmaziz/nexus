@@ -1,98 +1,117 @@
 // nexus-desktop/renderer/components/TitleBar.jsx
+// Custom frameless window titlebar matching the spec:
+//   Left:   ⚡ icon + "NEXUS" text
+//   Center: app-region drag area (full width)
+//   Right:  [_] [□] [✕] window control buttons
 
 function TitleBar({ onAddClick }) {
   const { useState } = React;
   const [isMaximized, setIsMaximized] = useState(false);
 
-  const minimize = () => window.nexus?.window?.minimize?.();
+  const minimize = () => {
+    window.nexus?.window?.minimize?.();
+    window.electron?.minimize?.();
+  };
   const maximize = () => {
     window.nexus?.window?.maximize?.();
+    window.electron?.maximize?.();
     setIsMaximized((v) => !v);
   };
-  const close = () => window.nexus?.window?.close?.();
+  const close = () => {
+    window.nexus?.window?.close?.();
+    window.electron?.close?.();
+  };
 
   return (
     <header
       style={{
-        height: 48,
-        background: 'var(--surface)',
+        height: 40,
+        background: 'var(--bg-base)',
         borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
-        paddingLeft: 16,
-        paddingRight: 8,
+        paddingLeft: 12,
+        paddingRight: 6,
         WebkitAppRegion: 'drag',
         flexShrink: 0,
+        zIndex: 100,
       }}
     >
-      {/* Logo */}
+      {/* Left: ⚡ + NEXUS */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          fontWeight: 700,
-          fontSize: 16,
-          letterSpacing: '.5px',
+          gap: 6,
+          fontFamily: "'Syne', sans-serif",
+          fontWeight: 800,
+          fontSize: 14,
+          letterSpacing: '2px',
           color: 'var(--accent)',
-          minWidth: 120,
+          minWidth: 110,
+          WebkitAppRegion: 'no-drag',
         }}
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-          <path d="M8 12l4 4 4-4M12 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-        Nexus
+        <span style={{ fontSize: 16, lineHeight: 1 }}>⚡</span>
+        <span>NEXUS</span>
       </div>
 
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
+      {/* Center: drag region */}
+      <div style={{ flex: 1, WebkitAppRegion: 'drag', height: '100%' }} />
 
-      {/* Add Download button */}
-      <button
-        className="btn btn-primary"
-        onClick={onAddClick}
-        style={{ WebkitAppRegion: 'no-drag', marginRight: 8 }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-        </svg>
-        New Download
-      </button>
+      {/* Right: Add + window controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, WebkitAppRegion: 'no-drag' }}>
+        <button
+          className="btn btn-primary"
+          onClick={onAddClick}
+          style={{
+            padding: '4px 12px',
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: '0.5px',
+            background: 'var(--accent)',
+            color: '#000',
+            borderRadius: 8,
+            gap: 4,
+            marginRight: 8,
+          }}
+        >
+          <span style={{ fontSize: 14, lineHeight: 1 }}>＋</span>
+          <span>ADD</span>
+        </button>
 
-      {/* Window controls */}
-      <div
-        style={{ display: 'flex', gap: 4, WebkitAppRegion: 'no-drag' }}
-      >
-        <WinButton onClick={minimize} title="Minimize" color="#facc15">
-          <span style={{ fontSize: 10, lineHeight: 1 }}>—</span>
-        </WinButton>
-        <WinButton onClick={maximize} title={isMaximized ? 'Restore' : 'Maximize'} color="#4ade80">
-          <span style={{ fontSize: 9, lineHeight: 1 }}>{isMaximized ? '❐' : '□'}</span>
-        </WinButton>
-        <WinButton onClick={close} title="Close" color="#f87171">
-          <span style={{ fontSize: 10, lineHeight: 1 }}>✕</span>
-        </WinButton>
+        <WinBtn onClick={minimize} title="Minimize" hoverColor="var(--accent3)">
+          <span style={{ fontSize: 11, lineHeight: 1, fontWeight: 600 }}>_</span>
+        </WinBtn>
+        <WinBtn onClick={maximize} title={isMaximized ? 'Restore' : 'Maximize'} hoverColor="var(--accent)">
+          <span style={{ fontSize: 10, lineHeight: 1 }}>{isMaximized ? '❐' : '□'}</span>
+        </WinBtn>
+        <WinBtn onClick={close} title="Close" hoverColor="var(--red)">
+          <span style={{ fontSize: 11, lineHeight: 1, fontWeight: 600 }}>✕</span>
+        </WinBtn>
       </div>
     </header>
   );
 }
 
-function WinButton({ onClick, title, color, children }) {
+function WinBtn({ onClick, title, hoverColor, children }) {
+  const { useState } = React;
+  const [hovered, setHovered] = useState(false);
   return (
     <button
       onClick={onClick}
       title={title}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        width: 28, height: 28, borderRadius: 6,
-        background: 'var(--surface2)',
-        border: '1px solid var(--border)',
-        color: 'var(--text-muted)', cursor: 'pointer',
+        width: 26, height: 26, borderRadius: 6,
+        background: hovered ? hoverColor : 'transparent',
+        border: 'none',
+        color: hovered ? (hoverColor === 'var(--red)' ? '#fff' : '#000') : 'var(--text-2)',
+        cursor: 'pointer',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'background .15s, color .15s',
+        transition: 'background .12s, color .12s',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = color; e.currentTarget.style.color = '#000'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface2)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
     >
       {children}
     </button>
