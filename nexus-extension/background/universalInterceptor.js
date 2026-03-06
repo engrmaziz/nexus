@@ -84,7 +84,7 @@ export const universalInterceptor = {
         pendingRequests.delete(details.requestId);
       },
       { urls: ['<all_urls>'] },
-      ['responseHeaders', 'blocking']
+      ['responseHeaders']
     );
 
     // Cleanup stale entries
