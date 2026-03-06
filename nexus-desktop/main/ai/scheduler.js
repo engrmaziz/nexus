@@ -1,168 +1,254 @@
 'use strict';
 
-const { getStatements } = require('../db/queries');
 const logger = require('../utils/logger');
 
 /**
- * BandwidthScheduler – decides whether downloads should run based on
- * user-defined time-window rules.
+ * AIScheduler – learns user download patterns and suggests optimal times.
  *
- * Schedule rules are stored in the `settings` table under key `bandwidth_schedule`
- * as a JSON array of rule objects:
+ * Data is stored in the `ai_schedule` table (created in SCHEMA_SQL in database.js).
  *
- *   [
- *     {
- *       "start": "22:00",   // 24-hour HH:MM
- *       "end":   "06:00",   // next day ok
- *       "limit": 0,          // bytes/sec; 0 = unlimited
- *       "active": true
- *     }
- *   ]
+ * The table schema:
+ *   CREATE TABLE IF NOT EXISTS ai_schedule (
+ *     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+ *     hour           INTEGER NOT NULL,
+ *     day_of_week    INTEGER NOT NULL,
+ *     download_count INTEGER NOT NULL DEFAULT 0,
+ *     avg_speed      REAL    NOT NULL DEFAULT 0
+ *   );
  */
-class BandwidthScheduler {
-  constructor() {
-    this._rules = [];
-    this._loaded = false;
-  }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Public API
-  // ──────────────────────────────────────────────────────────────────────
+// "Peak" hours during which large downloads should be deferred
+const PEAK_START = 8;   // 08:00
+const PEAK_END   = 22;  // 22:00
+const LARGE_FILE_THRESHOLD = 1024 * 1024 * 1024; // 1 GB
 
-  /**
-   * Load rules from the database (or use the provided array directly).
-   * @param {object[]} [rules]
-   */
-  loadRules(rules) {
-    if (rules) {
-      this._rules = rules;
-      this._loaded = true;
-      return;
-    }
+// setInterval handles for scheduled downloads: downloadId → intervalHandle
+const _scheduleHandles = new Map();
 
-    try {
-      const q = getStatements();
-      const row = q.getSetting.get('bandwidth_schedule');
-      if (row) {
-        this._rules = JSON.parse(row.value);
-      } else {
-        this._rules = [];
-      }
-      this._loaded = true;
-    } catch (err) {
-      logger.warn('Failed to load bandwidth schedule', { err: err.message });
-      this._rules = [];
-      this._loaded = true;
-    }
-  }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  /**
-   * Persist rules to the database.
-   * @param {object[]} rules
-   */
-  saveRules(rules) {
-    this._rules = rules;
-    try {
-      const q = getStatements();
-      q.setSetting.run({ key: 'bandwidth_schedule', value: JSON.stringify(rules) });
-    } catch (err) {
-      logger.warn('Failed to save bandwidth schedule', { err: err.message });
-    }
-  }
-
-  /**
-   * Can a download start right now?
-   * Returns true if no active rules restrict the current time.
-   * @returns {boolean}
-   */
-  canStart() {
-    if (!this._loaded) this.loadRules();
-    const activeRules = this._rules.filter((r) => r.active !== false);
-    if (activeRules.length === 0) return true;
-
-    const now = new Date();
-    const nowMins = now.getHours() * 60 + now.getMinutes();
-
-    for (const rule of activeRules) {
-      if (!rule.start || !rule.end) continue;
-
-      const startMins = this._parseTime(rule.start);
-      const endMins = this._parseTime(rule.end);
-
-      let inWindow;
-      if (startMins <= endMins) {
-        // Same-day window, e.g. 08:00 – 18:00
-        inWindow = nowMins >= startMins && nowMins < endMins;
-      } else {
-        // Overnight window, e.g. 22:00 – 06:00
-        inWindow = nowMins >= startMins || nowMins < endMins;
-      }
-
-      if (inWindow && rule.limit === 0) {
-        // Unlimited in this window – allow
-        return true;
-      }
-      if (inWindow && typeof rule.limit === 'number' && rule.limit > 0) {
-        // Speed-limited window – allowed but throttled
-        return true;
-      }
-    }
-
-    // Default: allow if no rule matches
-    return true;
-  }
-
-  /**
-   * Return the current speed limit (bytes/sec) – 0 means unlimited.
-   * @returns {number}
-   */
-  getCurrentLimit() {
-    if (!this._loaded) this.loadRules();
-    const activeRules = this._rules.filter((r) => r.active !== false);
-    if (activeRules.length === 0) return 0;
-
-    const now = new Date();
-    const nowMins = now.getHours() * 60 + now.getMinutes();
-
-    for (const rule of activeRules) {
-      if (!rule.start || !rule.end) continue;
-
-      const startMins = this._parseTime(rule.start);
-      const endMins = this._parseTime(rule.end);
-
-      let inWindow;
-      if (startMins <= endMins) {
-        inWindow = nowMins >= startMins && nowMins < endMins;
-      } else {
-        inWindow = nowMins >= startMins || nowMins < endMins;
-      }
-
-      if (inWindow) {
-        return typeof rule.limit === 'number' ? rule.limit : 0;
-      }
-    }
-
-    return 0;
-  }
-
-  /**
-   * Return all configured rules.
-   * @returns {object[]}
-   */
-  getRules() {
-    if (!this._loaded) this.loadRules();
-    return [...this._rules];
-  }
-
-  // ──────────────────────────────────────────────────────────────────────
-  // Helpers
-  // ──────────────────────────────────────────────────────────────────────
-
-  /** @returns {number} minutes since midnight */
-  _parseTime(timeStr) {
-    const [h, m] = timeStr.split(':').map(Number);
-    return (h || 0) * 60 + (m || 0);
+function _getDbFacade() {
+  try {
+    const { db } = require('../db/database');
+    return db;
+  } catch (_) {
+    return null;
   }
 }
 
-module.exports = new BandwidthScheduler();
+function _getRawDb() {
+  try {
+    const { getDb } = require('../db/database');
+    return getDb();
+  } catch (_) {
+    return null;
+  }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Record a completed download.
+ * @param {object} [opts]
+ * @param {number} [opts.avgSpeed]   Average speed in bytes/s (0 if unknown)
+ */
+function recordDownload(opts = {}) {
+  const { avgSpeed = 0 } = opts;
+  const now = new Date();
+  const hour = now.getHours();
+  const dayOfWeek = now.getDay();
+
+  try {
+    const facade = _getDbFacade();
+    if (facade && facade.updateSchedule) {
+      facade.updateSchedule(hour, dayOfWeek, avgSpeed);
+      return;
+    }
+
+    const db = _getRawDb();
+    if (!db) return;
+    const existing = db.prepare(
+      'SELECT * FROM ai_schedule WHERE hour = ? AND day_of_week = ?'
+    ).get(hour, dayOfWeek);
+
+    if (existing) {
+      const newCount = existing.download_count + 1;
+      const newAvg = (existing.avg_speed * existing.download_count + avgSpeed) / newCount;
+      db.prepare(
+        'UPDATE ai_schedule SET download_count = ?, avg_speed = ? WHERE hour = ? AND day_of_week = ?'
+      ).run(newCount, newAvg, hour, dayOfWeek);
+    } else {
+      db.prepare(
+        'INSERT INTO ai_schedule (hour, day_of_week, download_count, avg_speed) VALUES (?, ?, 1, ?)'
+      ).run(hour, dayOfWeek, avgSpeed);
+    }
+  } catch (err) {
+    logger.warn('AIScheduler.recordDownload failed', { err: err.message });
+  }
+}
+
+/**
+ * Find the hour with the best historical speeds and fewest user interactions.
+ * @returns {{ recommendedHour: number, reason: string, avgSpeedAtThatHour: number }}
+ */
+function getRecommendedTime() {
+  try {
+    const db = _getRawDb();
+    if (!db) return _defaultRecommendation();
+
+    const row = db.prepare(`
+      SELECT hour,
+             SUM(download_count) AS total_count,
+             SUM(avg_speed * download_count) / NULLIF(SUM(download_count), 0) AS weighted_avg_speed
+      FROM ai_schedule
+      GROUP BY hour
+      ORDER BY weighted_avg_speed DESC, total_count ASC
+      LIMIT 1
+    `).get();
+
+    if (!row) return _defaultRecommendation();
+
+    const recommendedHour = row.hour;
+    const avgSpeedAtThatHour = row.weighted_avg_speed || 0;
+    const reason = `Hour ${recommendedHour}:00 historically has the highest average speed (${_formatSpeed(avgSpeedAtThatHour)}) and fewest user interactions.`;
+
+    return { recommendedHour, reason, avgSpeedAtThatHour };
+  } catch (err) {
+    logger.warn('AIScheduler.getRecommendedTime failed', { err: err.message });
+    return _defaultRecommendation();
+  }
+}
+
+function _defaultRecommendation() {
+  return {
+    recommendedHour: 2,
+    reason: 'Default off-peak hour (02:00) – no historical data yet.',
+    avgSpeedAtThatHour: 0,
+  };
+}
+
+function _formatSpeed(bytesPerSec) {
+  if (!bytesPerSec) return '(unknown)';
+  if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`;
+  if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${bytesPerSec.toFixed(0)} B/s`;
+}
+
+/**
+ * Decide whether a download should be auto-scheduled.
+ * @param {{ size: number, file_size: number }} download
+ * @returns {{ schedule: boolean, suggestedTime?: number, reason?: string }}
+ */
+function shouldAutoSchedule(download) {
+  const size = (download && (download.size || download.file_size)) || 0;
+  const currentHour = new Date().getHours();
+  const isPeak = currentHour >= PEAK_START && currentHour < PEAK_END;
+
+  if (size > LARGE_FILE_THRESHOLD && isPeak) {
+    const { recommendedHour, reason } = getRecommendedTime();
+    return {
+      schedule: true,
+      suggestedTime: recommendedHour,
+      reason: `File is over 1 GB and it is currently peak hours (${PEAK_START}:00–${PEAK_END}:00). ${reason}`,
+    };
+  }
+
+  return { schedule: false };
+}
+
+/**
+ * Schedule a large download to start at a specific hour.
+ * @param {string} downloadId
+ * @param {number} hour  0–23
+ */
+function scheduleLargeDownload(downloadId, hour) {
+  if (_scheduleHandles.has(downloadId)) {
+    clearInterval(_scheduleHandles.get(downloadId));
+    _scheduleHandles.delete(downloadId);
+  }
+
+  try {
+    const db = _getRawDb();
+    if (db) {
+      db.prepare(
+        "UPDATE downloads SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?"
+      ).run(downloadId);
+    }
+  } catch (_) {}
+
+  logger.info('AIScheduler: large download scheduled', { downloadId, hour });
+
+  const handle = setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === hour) {
+      clearInterval(handle);
+      _scheduleHandles.delete(downloadId);
+      _activateScheduled(downloadId);
+    }
+  }, 60_000);
+
+  _scheduleHandles.set(downloadId, handle);
+}
+
+function _activateScheduled(downloadId) {
+  try {
+    const db = _getRawDb();
+    if (db) {
+      db.prepare(
+        "UPDATE downloads SET status = 'queued', updated_at = datetime('now') WHERE id = ? AND status = 'scheduled'"
+      ).run(downloadId);
+    }
+    logger.info('AIScheduler: scheduled download activated', { downloadId });
+    try {
+      const dm = require('../engine/downloadManager');
+      if (dm._processQueue) dm._processQueue();
+    } catch (_) {}
+  } catch (err) {
+    logger.warn('AIScheduler._activateScheduled failed', { err: err.message });
+  }
+}
+
+/**
+ * Return all schedule data for the renderer.
+ * @returns {{ rows: object[], recommendation: object }}
+ */
+function getScheduleData() {
+  try {
+    const facade = _getDbFacade();
+    if (facade && facade.getScheduleData) {
+      return { rows: facade.getScheduleData(), recommendation: getRecommendedTime() };
+    }
+
+    const db = _getRawDb();
+    if (!db) return { rows: [], recommendation: _defaultRecommendation() };
+
+    const rows = db.prepare(
+      'SELECT hour, day_of_week, download_count, avg_speed FROM ai_schedule ORDER BY hour ASC, day_of_week ASC'
+    ).all();
+
+    return { rows, recommendation: getRecommendedTime() };
+  } catch (err) {
+    logger.warn('AIScheduler.getScheduleData failed', { err: err.message });
+    return { rows: [], recommendation: _defaultRecommendation() };
+  }
+}
+
+/** Backward-compatibility shim – always returns true. */
+function canStart() { return true; }
+
+/** Backward-compatibility shim – no-op. */
+function loadRules() {}
+
+/** Backward-compatibility shim – returns empty array. */
+function getRules() { return []; }
+
+module.exports = {
+  recordDownload,
+  getRecommendedTime,
+  shouldAutoSchedule,
+  scheduleLargeDownload,
+  getScheduleData,
+  canStart,
+  loadRules,
+  getRules,
+};

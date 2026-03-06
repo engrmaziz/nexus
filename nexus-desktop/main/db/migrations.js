@@ -3,7 +3,7 @@
 const logger = require('../utils/logger');
 const { resetStatements } = require('./queries');
 
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 /**
  * Individual migration definitions.
@@ -51,6 +51,30 @@ const MIGRATIONS = [
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('bandwidth_schedule', '[]')
       `).run();
+    },
+  },
+  {
+    version: 4,
+    description: 'Add scheduled_time column and ensure ai_schedule table exists',
+    up(db) {
+      // ai_schedule table is created in the main schema (database.js SCHEMA_SQL),
+      // but ensure it exists in case of older installations
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_schedule (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          hour           INTEGER NOT NULL,
+          day_of_week    INTEGER NOT NULL,
+          download_count INTEGER NOT NULL DEFAULT 0,
+          avg_speed      REAL    NOT NULL DEFAULT 0
+        )
+      `);
+      // Add scheduled_time column to downloads for large-file deferral
+      try {
+        const cols = db.prepare(`PRAGMA table_info(downloads)`).all().map((c) => c.name);
+        if (!cols.includes('scheduled_time')) {
+          db.exec(`ALTER TABLE downloads ADD COLUMN scheduled_time TEXT`);
+        }
+      } catch (_) {}
     },
   },
 ];
