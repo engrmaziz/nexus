@@ -42,7 +42,20 @@ const GITHUB_RELEASES_URL = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases
 
 // Regex to parse yt-dlp download progress lines:
 // [download]  45.3% of ~  234.12MiB at    5.23MiB/s ETA 00:33
-const PROGRESS_RE = /\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\s*\S+)\s+at\s+([\d.]+\s*\S+\/s)\s+ETA\s+([\d:]+)/;
+const PROGRESS_RE = /\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+)\s*(KiB|MiB|GiB)\s+at\s+([\d.]+)\s*(KiB|MiB|GiB)\/s/;
+
+// Unit multipliers for yt-dlp size strings
+const _SIZE_MULTIPLIERS = { KiB: 1024, MiB: 1024 * 1024, GiB: 1024 * 1024 * 1024 };
+
+/**
+ * Convert a size value + unit string to bytes.
+ * @param {number} value
+ * @param {string} unit  'KiB' | 'MiB' | 'GiB'
+ * @returns {number}
+ */
+function _toBytes(value, unit) {
+  return Math.round(value * (_SIZE_MULTIPLIERS[unit] || 1));
+}
 
 // Format selection map
 const QUALITY_MAP = {
@@ -99,11 +112,14 @@ function runYtdlp(args, opts = {}) {
 
         const m = PROGRESS_RE.exec(line);
         if (m && typeof onProgress === 'function') {
+          const percent    = parseFloat(m[1]);
+          const totalBytes = _toBytes(parseFloat(m[2]), m[3]);
+          const speedBytes = _toBytes(parseFloat(m[4]), m[5]);
           onProgress({
-            percent: parseFloat(m[1]),
-            size: m[2].trim(),
-            speed: m[3].trim(),
-            eta: m[4].trim(),
+            percent,
+            size:       totalBytes,
+            downloaded: Math.round(totalBytes * percent / 100),
+            speed:      speedBytes,
           });
         }
       }

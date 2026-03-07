@@ -658,6 +658,9 @@ class DownloadManager extends EventEmitter {
 
     const q = getStatements();
 
+    // Track the resolved absolute file path for the final size update on completion.
+    let resolvedFilePath = null;
+
     await new Promise((resolve, reject) => {
       engine.on('title', (title) => {
         q.updateDownloadTitle.run({ id: dl.id, title });
@@ -667,6 +670,7 @@ class DownloadManager extends EventEmitter {
       engine.on('filename', (filePath) => {
         // Guarantee we always store an absolute path in the DB.
         const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+        resolvedFilePath = absPath;
         let actualSize = 0;
         try { actualSize = fs.statSync(absPath).size; } catch (_) {}
         const ext = path.extname(absPath).toLowerCase();
@@ -687,29 +691,38 @@ class DownloadManager extends EventEmitter {
       });
 
       engine.on('progress', (p) => {
-        const progress  = Math.min(100, p.percent || 0);
-        const speedBytes = _parseSpeedToBytes(p.speed);
-        const etaSecs    = _parseEtaToSeconds(p.eta);
+        const progress   = Math.min(100, p.percent || 0);
+        const size       = p.size       || 0;
+        const downloaded = p.downloaded || 0;
+        const speed      = p.speed      || 0;
 
-        this._progressCache.set(dl.id, {
-          downloaded: 0,
-          speed:      speedBytes,
-          progress,
-          eta:        etaSecs,
-        });
+        // Persist progress (including real file size) directly to DB.
+        q.updateYtdlpProgress.run({ id: dl.id, file_size: size, downloaded, speed, progress });
 
         const progressData = {
-          id:       dl.id,
-          status:   STATUS.DOWNLOADING,
+          id:         dl.id,
+          status:     STATUS.DOWNLOADING,
           progress,
-          speed:    speedBytes,
-          eta:      etaSecs,
-          totalSize: p.size || '',
+          speed,
+          downloaded,
+          file_size:  size,
         };
         this.emit('update', dl.id, progressData);
         this.emit('progress', progressData);
       });
-      engine.on('complete', resolve);
+
+      engine.on('complete', () => {
+        // After yt-dlp exits, stat the actual file for the authoritative final size.
+        if (resolvedFilePath) {
+          try {
+            const stats = fs.statSync(resolvedFilePath);
+            q.updateDownloadFinalSize.run({ id: dl.id, file_size: stats.size, downloaded: stats.size });
+            this.emit('update', dl.id, { file_size: stats.size, downloaded: stats.size });
+          } catch (_) {}
+        }
+        resolve();
+      });
+
       engine.on('error', reject);
 
       ctrl.signal.addEventListener('abort', () => engine.abort());
