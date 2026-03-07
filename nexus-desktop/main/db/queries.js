@@ -3,7 +3,7 @@
 // IMPORTANT: Never cache statements - create fresh every call
 // sql.js statements become "closed" after use if cached
 
-const { getDb } = require('./database');
+const getDb = () => require('./database').getDb();
 
 function getStatements() {
   const db = getDb();

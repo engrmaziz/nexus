@@ -534,8 +534,9 @@ class DownloadManager extends EventEmitter {
         await this._runChunk(dl, tempDir, ctrl);
       }
 
-      q.updateDownloadCompleted.run({ id: dl.id });
-      q.upsertStats.run({ downloaded: dl.file_size || 0 });
+    const qDone = getStatements();
+      qDone.updateDownloadCompleted.run({ id: dl.id });
+      qDone.upsertStats.run({ downloaded: dl.file_size || 0 });
       resumeManager.clearById(dl.id);
       this._onFinish(dl.id);
 
