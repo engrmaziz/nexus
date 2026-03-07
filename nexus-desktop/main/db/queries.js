@@ -8,7 +8,7 @@ function getStatements() {
   const db = getDb();
 
   return {
-    insertDownload:          db.prepare(`INSERT INTO downloads
+    insertDownload:          db.prepare(`INSERT OR REPLACE INTO downloads
       (id, url, title, filename, save_path, category, status,
        file_size, downloaded, mime_type, referrer, headers,
        is_hls, is_dash, is_playlist, playlist_id, priority, max_retries)
