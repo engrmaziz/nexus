@@ -1,0 +1,8 @@
+
+Videos/
+nexus-desktop/Videos/
+nexus-desktop/node_modules/
+*.mp4
+*.mkv
+*.avi
+*.webm
