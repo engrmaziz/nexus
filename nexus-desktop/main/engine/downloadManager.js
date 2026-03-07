@@ -309,9 +309,13 @@ class DownloadManager extends EventEmitter {
     // Record this download's hour for AI scheduler
     try { scheduler.recordDownload(); } catch (_) {}
 
-    if (scheduler.canStart()) {
-      this._enqueue(id, priority);
-      this._processQueue();
+    try {
+      if (scheduler.canStart()) {
+        this._enqueue(id, priority);
+        this._processQueue();
+      }
+    } catch (err) {
+      logger.error('Start download error', { id, err: err.message, stack: err.stack });
     }
 
     return id;
@@ -325,7 +329,7 @@ class DownloadManager extends EventEmitter {
       const dl = q.getDownload.get(id);
       if (!dl || dl.status === STATUS.CANCELLED || dl.status === STATUS.COMPLETE) continue;
       this._startDownload(dl).catch((err) => {
-        logger.error('Unhandled error starting download', { id, err: err.message });
+        logger.error('Unhandled error starting download', { id, err: err.message, stack: err.stack });
       });
     }
   }
