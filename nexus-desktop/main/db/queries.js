@@ -15,22 +15,28 @@ function getStatements() {
     stmt.free();
   }
 
-  function get(sql, params) {
+function get(sql, params) {
     const stmt = db.prepare(sql);
-    if (params !== undefined) stmt.bind(Array.isArray(params) ? params : [params]);
-    const row = stmt.step() ? stmt.getAsObject() : null;
+    const p = params !== undefined ? (Array.isArray(params) ? params : [params]) : undefined;
+    const row = stmt.step(p) ? stmt.getAsObject() : null;
     stmt.free();
     return row;
   }
+  
 
   function all(sql, params) {
     const stmt = db.prepare(sql);
-    if (params !== undefined) stmt.bind(Array.isArray(params) ? params : [params]);
     const rows = [];
-    while (stmt.step()) rows.push(stmt.getAsObject());
+    if (params !== undefined) {
+      const p = Array.isArray(params) ? params : [params];
+      while (stmt.step(p)) rows.push(stmt.getAsObject());
+    } else {
+      while (stmt.step()) rows.push(stmt.getAsObject());
+    }
     stmt.free();
     return rows;
   }
+
 
   return {
     // ── downloads ──────────────────────────────────────────────────────────
