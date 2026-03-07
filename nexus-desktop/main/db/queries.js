@@ -1,22 +1,61 @@
 'use strict';
 
-let _stmts = null;
+/**
+ * Create a statement descriptor that prepares a fresh sql.js statement on
+ * every call, executes it, then frees it.  This avoids the "Statement closed"
+ * error that occurs when a cached prepared statement is freed (or invalidated)
+ * before it is used again.
+ *
+ * The returned object exposes the same .run() / .get() / .all() surface as
+ * a better-sqlite3 statement, but delegates to a brand-new _SqlJsStatement
+ * wrapper each time so the underlying WASM statement is always fresh.
+ */
+function _makeStmt(db, sql) {
+  return {
+    run(...args) {
+      const stmt = db.prepare(sql);
+      try {
+        return stmt.run(...args);
+      } finally {
+        stmt.free();
+      }
+    },
+    get(...args) {
+      const stmt = db.prepare(sql);
+      try {
+        return stmt.get(...args);
+      } finally {
+        stmt.free();
+      }
+    },
+    all(...args) {
+      const stmt = db.prepare(sql);
+      try {
+        return stmt.all(...args);
+      } finally {
+        stmt.free();
+      }
+    },
+  };
+}
 
 /**
- * Lazily prepare all SQL statements.
- * Call this after the database has been opened.
+ * Return statement descriptors for every query used by the application.
+ *
+ * Because each descriptor creates a fresh prepared statement on every call
+ * (and frees it immediately after), there is no risk of "Statement closed"
+ * errors due to cached statements being freed by resetStatements() or the
+ * database being reopened after a migration.
  */
 function getStatements() {
-  if (_stmts) return _stmts;
-
   // Lazy require avoids capturing a stale reference during circular-dependency
   // resolution (database → migrations → queries → database).
   const { getDb } = require('./database');
   const db = getDb();
 
-  _stmts = {
+  return {
     // ── downloads ──────────────────────────────────────────────────────────
-    insertDownload: db.prepare(`
+    insertDownload: _makeStmt(db, `
       INSERT INTO downloads
         (id, url, title, filename, save_path, category, status,
          file_size, downloaded, mime_type, referrer, headers,
@@ -27,19 +66,19 @@ function getStatements() {
          @is_hls, @is_dash, @is_playlist, @playlist_id, @priority, @max_retries)
     `),
 
-    getDownload: db.prepare(
+    getDownload: _makeStmt(db,
       `SELECT * FROM downloads WHERE id = ?`
     ),
 
-    getAllDownloads: db.prepare(
+    getAllDownloads: _makeStmt(db,
       `SELECT * FROM downloads ORDER BY created_at DESC`
     ),
 
-    getDownloadsByStatus: db.prepare(
+    getDownloadsByStatus: _makeStmt(db,
       `SELECT * FROM downloads WHERE status = ? ORDER BY priority DESC, created_at ASC`
     ),
 
-    updateDownloadProgress: db.prepare(`
+    updateDownloadProgress: _makeStmt(db, `
       UPDATE downloads
       SET downloaded  = @downloaded,
           speed       = @speed,
@@ -49,14 +88,14 @@ function getStatements() {
       WHERE id = @id
     `),
 
-    updateDownloadStatus: db.prepare(`
+    updateDownloadStatus: _makeStmt(db, `
       UPDATE downloads
       SET status     = @status,
           updated_at = datetime('now')
       WHERE id = @id
     `),
 
-    updateDownloadStarted: db.prepare(`
+    updateDownloadStarted: _makeStmt(db, `
       UPDATE downloads
       SET status     = 'downloading',
           started_at = datetime('now'),
@@ -64,7 +103,7 @@ function getStatements() {
       WHERE id = @id
     `),
 
-    updateDownloadCompleted: db.prepare(`
+    updateDownloadCompleted: _makeStmt(db, `
       UPDATE downloads
       SET status      = 'completed',
           progress    = 100,
@@ -73,7 +112,7 @@ function getStatements() {
       WHERE id = @id
     `),
 
-    updateDownloadError: db.prepare(`
+    updateDownloadError: _makeStmt(db, `
       UPDATE downloads
       SET status     = 'error',
           error_msg  = @error_msg,
@@ -81,14 +120,14 @@ function getStatements() {
       WHERE id = @id
     `),
 
-    updateDownloadChunks: db.prepare(`
+    updateDownloadChunks: _makeStmt(db, `
       UPDATE downloads
       SET chunks     = @chunks,
           updated_at = datetime('now')
       WHERE id = @id
     `),
 
-    updateDownloadFileInfo: db.prepare(`
+    updateDownloadFileInfo: _makeStmt(db, `
       UPDATE downloads
       SET file_size  = @file_size,
           filename   = @filename,
@@ -97,24 +136,24 @@ function getStatements() {
       WHERE id = @id
     `),
 
-    incrementRetries: db.prepare(`
+    incrementRetries: _makeStmt(db, `
       UPDATE downloads
       SET retries    = retries + 1,
           updated_at = datetime('now')
       WHERE id = ?
     `),
 
-    deleteDownload: db.prepare(
+    deleteDownload: _makeStmt(db,
       `DELETE FROM downloads WHERE id = ?`
     ),
 
-    getActiveDownloads: db.prepare(`
+    getActiveDownloads: _makeStmt(db, `
       SELECT * FROM downloads
       WHERE status IN ('downloading', 'queued', 'merging')
       ORDER BY priority DESC
     `),
 
-    getPendingDownloads: db.prepare(`
+    getPendingDownloads: _makeStmt(db, `
       SELECT * FROM downloads
       WHERE status IN ('pending', 'queued')
       ORDER BY priority DESC, created_at ASC
@@ -122,7 +161,7 @@ function getStatements() {
     `),
 
     // ── chunks ─────────────────────────────────────────────────────────────
-    insertChunk: db.prepare(`
+    insertChunk: _makeStmt(db, `
       INSERT OR REPLACE INTO download_chunks
         (id, download_id, chunk_index, start_byte, end_byte,
          downloaded, status, temp_file)
@@ -131,11 +170,11 @@ function getStatements() {
          @downloaded, @status, @temp_file)
     `),
 
-    getChunks: db.prepare(
+    getChunks: _makeStmt(db,
       `SELECT * FROM download_chunks WHERE download_id = ? ORDER BY chunk_index ASC`
     ),
 
-    updateChunkProgress: db.prepare(`
+    updateChunkProgress: _makeStmt(db, `
       UPDATE download_chunks
       SET downloaded = @downloaded,
           status     = @status,
@@ -143,34 +182,34 @@ function getStatements() {
       WHERE id = @id
     `),
 
-    updateChunkStatus: db.prepare(`
+    updateChunkStatus: _makeStmt(db, `
       UPDATE download_chunks
       SET status     = @status,
           updated_at = datetime('now')
       WHERE id = @id
     `),
 
-    deleteChunks: db.prepare(
+    deleteChunks: _makeStmt(db,
       `DELETE FROM download_chunks WHERE download_id = ?`
     ),
 
-    getIncompleteChunks: db.prepare(`
+    getIncompleteChunks: _makeStmt(db, `
       SELECT * FROM download_chunks
       WHERE download_id = ? AND status != 'completed'
       ORDER BY chunk_index ASC
     `),
 
     // ── playlists ──────────────────────────────────────────────────────────
-    insertPlaylist: db.prepare(`
+    insertPlaylist: _makeStmt(db, `
       INSERT INTO playlists (id, url, title, total)
       VALUES (@id, @url, @title, @total)
     `),
 
-    getPlaylist: db.prepare(
+    getPlaylist: _makeStmt(db,
       `SELECT * FROM playlists WHERE id = ?`
     ),
 
-    updatePlaylistProgress: db.prepare(`
+    updatePlaylistProgress: _makeStmt(db, `
       UPDATE playlists
       SET completed  = completed + 1,
           status     = CASE WHEN completed + 1 >= total THEN 'completed' ELSE 'downloading' END,
@@ -179,22 +218,22 @@ function getStatements() {
     `),
 
     // ── settings ───────────────────────────────────────────────────────────
-    setSetting: db.prepare(`
+    setSetting: _makeStmt(db, `
       INSERT INTO settings (key, value)
       VALUES (@key, @value)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
     `),
 
-    getSetting: db.prepare(
+    getSetting: _makeStmt(db,
       `SELECT value FROM settings WHERE key = ?`
     ),
 
-    getAllSettings: db.prepare(
+    getAllSettings: _makeStmt(db,
       `SELECT key, value FROM settings`
     ),
 
     // ── stats ──────────────────────────────────────────────────────────────
-    upsertStats: db.prepare(`
+    upsertStats: _makeStmt(db, `
       INSERT INTO stats (date, downloaded, count)
       VALUES (date('now'), @downloaded, 1)
       ON CONFLICT(date) DO UPDATE
@@ -202,34 +241,23 @@ function getStatements() {
             count      = count + 1
     `),
 
-    getStats: db.prepare(`
+    getStats: _makeStmt(db, `
       SELECT * FROM stats ORDER BY date DESC LIMIT 30
     `),
 
-    getTotalStats: db.prepare(`
+    getTotalStats: _makeStmt(db, `
       SELECT
         COALESCE(SUM(downloaded), 0) AS total_bytes,
         COALESCE(SUM(count), 0)      AS total_count
       FROM stats
     `),
   };
-
-  return _stmts;
 }
 
 /**
- * Invalidate cached statements (e.g. after a migration adds new columns).
- * Frees the underlying sql.js prepared statements to avoid memory leaks.
+ * No-op kept for backward compatibility with migrations.js.
+ * With the fresh-statement pattern there are no cached statements to free.
  */
-function resetStatements() {
-  if (_stmts) {
-    for (const stmt of Object.values(_stmts)) {
-      if (stmt && typeof stmt.free === 'function') {
-        try { stmt.free(); } catch (_) {}
-      }
-    }
-  }
-  _stmts = null;
-}
+function resetStatements() {}
 
 module.exports = { getStatements, resetStatements };
