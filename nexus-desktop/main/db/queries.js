@@ -22,6 +22,8 @@ function getStatements() {
     updateDownloadTitle:     db.prepare(`UPDATE downloads SET title=@title, filename=@title, updated_at=datetime('now') WHERE id=@id`),
     updateDownloadFilePath:  db.prepare(`UPDATE downloads SET file_path=@file_path, size=@size, downloaded=@size, updated_at=datetime('now') WHERE id=@id`),
     updateDownloadFileInfo:  db.prepare(`UPDATE downloads SET file_size=@file_size, filename=@filename, mime_type=@mime_type, updated_at=datetime('now') WHERE id=@id`),
+    updateYtdlpProgress:     db.prepare(`UPDATE downloads SET file_size=@file_size, downloaded=@downloaded, speed=@speed, progress=@progress, updated_at=datetime('now') WHERE id=@id`),
+    updateDownloadFinalSize: db.prepare(`UPDATE downloads SET file_size=@file_size, downloaded=@downloaded, updated_at=datetime('now') WHERE id=@id`),
     incrementRetries:        db.prepare(`UPDATE downloads SET retry_count=retry_count+1, updated_at=datetime('now') WHERE id=?`),
     deleteDownload:          db.prepare(`DELETE FROM downloads WHERE id=?`),
     insertChunk:             db.prepare(`INSERT OR REPLACE INTO download_chunks (id, download_id, chunk_index, start_byte, end_byte, downloaded, status, temp_file) VALUES (@id, @download_id, @chunk_index, @start_byte, @end_byte, @downloaded, @status, @temp_file)`),
