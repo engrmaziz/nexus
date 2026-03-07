@@ -670,7 +670,7 @@ class DownloadManager extends EventEmitter {
 
       engine.on('filename', (filePath) => {
         // Guarantee we always store an absolute path in the DB.
-        const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+        const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
         resolvedFilePath = absPath;
         let actualSize = 0;
         try { actualSize = fs.statSync(absPath).size; } catch (_) {}

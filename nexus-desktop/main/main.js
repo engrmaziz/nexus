@@ -466,18 +466,24 @@ function _resolveVideoFile(filePath) {
 }
 
 ipcMain.handle('shell:openFile', (_e, filePath) => {
-  const resolved = _resolveVideoFile(filePath);
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(__dirname, '..', filePath);
+  const resolved = _resolveVideoFile(resolvedPath);
   return shell.openPath(resolved);
 });
 ipcMain.handle('shell:showInFolder', (_e, filePath) => {
-  shell.showItemInFolder(filePath);
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(__dirname, '..', filePath);
+  shell.showItemInFolder(resolvedPath);
 });
 
 ipcMain.handle('open-file', (_e, filePath) => {
-  const resolved = _resolveVideoFile(filePath);
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(__dirname, '..', filePath);
+  const resolved = _resolveVideoFile(resolvedPath);
   return shell.openPath(resolved);
 });
-ipcMain.handle('open-folder', (_e, filePath) => shell.showItemInFolder(filePath));
+ipcMain.handle('open-folder', (_e, filePath) => {
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(__dirname, '..', filePath);
+  shell.showItemInFolder(resolvedPath);
+});
 
 ipcMain.handle('dialog:selectFolder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
