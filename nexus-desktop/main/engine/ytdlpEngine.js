@@ -21,6 +21,22 @@ const YTDLP_BIN = process.env.YTDLP_BIN || path.join(
   process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
 );
 
+// ─── ffmpeg path ──────────────────────────────────────────────────────────────
+
+const ffmpegPath = (() => {
+  // Try ffmpeg-static first
+  try {
+    const p = require('ffmpeg-static');
+    if (p && fs.existsSync(p)) return p;
+  } catch (_) {}
+  // Try .nexus/bin/ffmpeg(.exe)
+  const nexusBin = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const nexusPath = path.join(os.homedir(), '.nexus', 'bin', nexusBin);
+  if (fs.existsSync(nexusPath)) return nexusPath;
+  // Fall back to system PATH
+  return 'ffmpeg';
+})();
+
 // GitHub releases API for latest yt-dlp
 const GITHUB_RELEASES_URL = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
 
@@ -237,6 +253,7 @@ async function downloadVideo(url, quality, outputPath, onProgress, opts = {}) {
   if (opts.cookies) args.push('--cookies', opts.cookies);
   if (opts.proxy)   args.push('--proxy', opts.proxy);
   if (opts.rateLimit) args.push('--rate-limit', opts.rateLimit);
+  if (ffmpegPath !== 'ffmpeg') args.push('--ffmpeg-location', path.dirname(ffmpegPath));
 
   args.push(url);
 
