@@ -188,7 +188,7 @@ class DownloadManager extends EventEmitter {
             q.updateDownloadStatus.run({ id, status: STATUS.PAUSED });
             this.emit('update', id, {
               status: STATUS.PAUSED,
-              error_msg: 'Network lost. Download paused. Will resume when reconnected.',
+              error_message: 'Network lost. Download paused. Will resume when reconnected.',
             });
           } catch (_) {}
         }
@@ -550,9 +550,9 @@ class DownloadManager extends EventEmitter {
       if (err.code === 'ENOSPC') {
         q.updateDownloadStatus.run({ id: dl.id, status: STATUS.PAUSED });
         const msg = 'Disk full. Free up space and resume.';
-        q.updateDownloadError.run({ id: dl.id, error_msg: msg });
+        q.updateDownloadError.run({ id: dl.id, error_message: msg });
         this._onFinish(dl.id);
-        this.emit('update', dl.id, { status: STATUS.PAUSED, error_msg: msg });
+        this.emit('update', dl.id, { status: STATUS.PAUSED, error_message: msg });
         logger.error('Download paused – disk full (ENOSPC)', { id: dl.id });
         return;
       }
@@ -560,9 +560,9 @@ class DownloadManager extends EventEmitter {
       // Edge case [3]: Authentication required – treat as permanent failure
       if (err.code === 'HTTP_401' || err.code === 'HTTP_403') {
         const msg = 'This file requires login. Open in browser and try the Nexus button.';
-        q.updateDownloadError.run({ id: dl.id, error_msg: msg });
+        q.updateDownloadError.run({ id: dl.id, error_message: msg });
         this._onFinish(dl.id);
-        this.emit('update', dl.id, { status: STATUS.ERROR, error_msg: msg });
+        this.emit('update', dl.id, { status: STATUS.ERROR, error_message: msg });
         this.emit('error', dl.id, err);
         return;
       }
@@ -586,9 +586,9 @@ class DownloadManager extends EventEmitter {
           this._processQueue();
         }, delay);
       } else {
-        q.updateDownloadError.run({ id: dl.id, error_msg: err.message });
+        q.updateDownloadError.run({ id: dl.id, error_message: err.message });
         this._onFinish(dl.id);
-        this.emit('update', dl.id, { status: STATUS.ERROR, error_msg: err.message });
+        this.emit('update', dl.id, { status: STATUS.ERROR, error_message: err.message });
         this.emit('error', dl.id, err);
         logger.error('Download failed permanently', { id: dl.id, err: err.message });
       }
