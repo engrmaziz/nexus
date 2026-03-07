@@ -259,6 +259,7 @@ async function downloadVideo(url, quality, outputPath, onProgress, opts = {}) {
     '--no-part',
     '--retries', '5',
     '--fragment-retries', '5',
+    '--restrict-filenames',
   ];
 
   if (opts.cookies) args.push('--cookies', opts.cookies);
