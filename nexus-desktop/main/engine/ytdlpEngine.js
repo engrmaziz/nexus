@@ -49,10 +49,11 @@ const QUALITY_MAP = {
  * @param {Function} [opts.onProgress]    Called with parsed progress objects.
  * @param {Function} [opts.onStdoutLine]  Called with each raw stdout line.
  * @param {AbortSignal} [opts.signal]     AbortSignal for cancellation.
+ * @param {Function} [opts.onProc]        Called with the spawned child process.
  * @returns {Promise<string>}  Resolves to captured stdout (if capture=true) or ''.
  */
 function runYtdlp(args, opts = {}) {
-  const { capture = false, onProgress, onStdoutLine, signal } = opts;
+  const { capture = false, onProgress, onStdoutLine, signal, onProc } = opts;
 
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(YTDLP_BIN)) {
@@ -62,6 +63,8 @@ function runYtdlp(args, opts = {}) {
     logger.debug('yt-dlp spawn', { args });
 
     const proc = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    if (typeof onProc === 'function') onProc(proc);
 
     let stdout = '';
     let stderr = '';
@@ -96,7 +99,14 @@ function runYtdlp(args, opts = {}) {
 
     if (signal) {
       signal.addEventListener('abort', () => {
-        try { proc.kill('SIGTERM'); } catch (_) {}
+        try {
+          if (process.platform === 'win32') {
+            const { execFile } = require('child_process');
+            execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F']);
+          } else {
+            proc.kill('SIGKILL');
+          }
+        } catch (_) {}
       });
     }
 
@@ -230,7 +240,7 @@ async function downloadVideo(url, quality, outputPath, onProgress, opts = {}) {
 
   args.push(url);
 
-  await runYtdlp(args, { onProgress, signal: opts.signal });
+  await runYtdlp(args, { onProgress, signal: opts.signal, onProc: opts.onProc });
   return outputPath;
 }
 
@@ -453,6 +463,7 @@ class YtdlpEngine extends EventEmitter {
     this.extraArgs = opts.extraArgs || [];
     this._controller = new AbortController();
     this._aborted = false;
+    this._proc = null;
   }
 
   async getInfo() {
@@ -464,6 +475,17 @@ class YtdlpEngine extends EventEmitter {
   }
 
   async download() {
+    // Fetch the real video title before starting the download
+    let realTitle = null;
+    try {
+      realTitle = (await runYtdlp(['--get-title', '--no-playlist', this.url], { capture: true })).trim();
+    } catch (_) {}
+
+    if (realTitle) {
+      this.emit('title', realTitle);
+      this.emit('progress', { percent: 0, title: realTitle, speed: '0', eta: '--' });
+    }
+
     const outputPath = path.join(this.outputDir, this.outputTemplate);
     const quality = this.quality || 'best';
 
@@ -478,6 +500,7 @@ class YtdlpEngine extends EventEmitter {
           proxy: this.proxy,
           rateLimit: this.rateLimit,
           signal: this._controller.signal,
+          onProc: (proc) => { this._proc = proc; },
         }
       );
       this.emit('complete', { outputPath });
@@ -490,6 +513,17 @@ class YtdlpEngine extends EventEmitter {
   abort() {
     this._aborted = true;
     this._controller.abort();
+    if (this._proc) {
+      try {
+        if (process.platform === 'win32') {
+          const { execFile } = require('child_process');
+          execFile('taskkill', ['/pid', String(this._proc.pid), '/T', '/F']);
+        } else {
+          this._proc.kill('SIGKILL');
+        }
+      } catch (_) {}
+      this._proc = null;
+    }
   }
 
   static getBinaryPath() {

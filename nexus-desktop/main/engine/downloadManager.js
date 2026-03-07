@@ -647,6 +647,11 @@ class DownloadManager extends EventEmitter {
     const q = getStatements();
 
     await new Promise((resolve, reject) => {
+      engine.on('title', (title) => {
+        q.updateDownloadTitle.run({ id: dl.id, title });
+        this.emit('update', dl.id, { title });
+      });
+
       engine.on('progress', (p) => {
         const progress  = Math.min(100, p.percent || 0);
         const speedBytes = _parseSpeedToBytes(p.speed);
