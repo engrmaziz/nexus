@@ -90,7 +90,7 @@ app.post('/downloads', async (req, res) => {
     return res.status(400).json({ error: 'Invalid URL' });
   }
   try {
-    const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
+    const addFn = downloadManager.add.bind(downloadManager);
     const id = await addFn({ url, ...rest });
     res.status(201).json({ id });
   } catch (err) {
@@ -208,7 +208,7 @@ app.post('/api/download', async (req, res) => {
     // 5. Add to download queue
     const isVideo = resolvedType === 'video' || resolvedType === 'hls' ||
       resolvedType === 'dash' || resolvedType === 'audio' || resolvedType === 'yt';
-    const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
+    const addFn = downloadManager.add.bind(downloadManager);
     const downloadId = await addFn({
       url:      (stream && stream.url) || url,
       filename: cleanName,
@@ -305,7 +305,7 @@ app.post('/api/playlist/download', async (req, res) => {
   try {
     const { v4: uuidv4 } = require('uuid');
     const playlistId = uuidv4();
-    const addFn = downloadManager.add || downloadManager.addDownload.bind(downloadManager);
+    const addFn = downloadManager.add.bind(downloadManager);
     const list = Array.isArray(entries) && entries.length > 0 ? entries : [{ url, title }];
     let queuedCount = 0;
     for (const entry of list) {
