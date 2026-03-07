@@ -563,10 +563,12 @@ class YtdlpEngine extends EventEmitter {
       }
 
       if (resolvedFilename) {
-        // Ensure it is an absolute path
+        // Ensure it is an absolute path.
+        // yt-dlp outputs paths relative to process.cwd(), NOT relative to outputDir,
+        // so we must resolve against cwd (path.resolve) rather than joining with outputDir.
         const realFilePath = path.isAbsolute(resolvedFilename)
           ? resolvedFilename
-          : path.join(outputDir, resolvedFilename);
+          : path.resolve(resolvedFilename);
         this.emit('filename', realFilePath);
       }
 

@@ -539,7 +539,15 @@ class DownloadManager extends EventEmitter {
       resumeManager.clearById(dl.id);
       this._onFinish(dl.id);
 
+      // For non-yt-dlp downloads (chunk/HLS/DASH), file_path is not set by the engine.
+      // Set it now so Open File / Open Folder work correctly without constructing paths
+      // from save_path + filename in the renderer.
       const completed = q.getDownload.get(dl.id);
+      if (completed && !completed.file_path && completed.save_path && completed.filename) {
+        const absFilePath = path.join(completed.save_path, completed.filename);
+        q.updateDownloadFilePath.run({ id: dl.id, file_path: absFilePath });
+        completed.file_path = absFilePath;
+      }
       this.emit('update', dl.id, { status: STATUS.COMPLETE, progress: 100 });
       this.emit('complete', completed);
       logger.info('Download complete', { id: dl.id });
@@ -657,22 +665,24 @@ class DownloadManager extends EventEmitter {
       });
 
       engine.on('filename', (filePath) => {
+        // Guarantee we always store an absolute path in the DB.
+        const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
         let actualSize = 0;
-        try { actualSize = fs.statSync(filePath).size; } catch (_) {}
-        const ext = path.extname(filePath).toLowerCase();
+        try { actualSize = fs.statSync(absPath).size; } catch (_) {}
+        const ext = path.extname(absPath).toLowerCase();
         const mimeTypes = { '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm' };
         const mimeType = mimeTypes[ext] || 'video/mp4';
         q.updateDownloadFileInfo.run({
           id: dl.id,
-          filename: path.basename(filePath),
+          filename: path.basename(absPath),
           file_size: actualSize,
           mime_type: mimeType,
         });
-        q.updateDownloadFilePath.run({ id: dl.id, file_path: filePath });
+        q.updateDownloadFilePath.run({ id: dl.id, file_path: absPath });
         this.emit('update', dl.id, {
-          title: path.basename(filePath, path.extname(filePath)),
-          filename: path.basename(filePath),
-          file_path: filePath,
+          title: path.basename(absPath, path.extname(absPath)),
+          filename: path.basename(absPath),
+          file_path: absPath,
         });
       });
 
