@@ -2,6 +2,7 @@
 
 const { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, Tray, Menu, nativeImage, protocol } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 
 const { openDatabase, closeDatabase } = require('./db/database');
@@ -437,14 +438,45 @@ ipcMain.handle('get-stats', () => {
 });
 
 // ── Shell / Dialog ─────────────────────────────────────────────────────────────
+
+const SUPPORTED_VIDEO_EXTS = ['.mp4', '.mkv', '.webm'];
+
+/**
+ * Resolve the actual video file on disk from a stored filePath.
+ * yt-dlp may produce a different extension than what was requested, and
+ * special characters / spaces in titles can cause mismatches.  We scan the
+ * parent directory for any file whose base name exactly matches the stored
+ * base name and has a recognised video extension.
+ */
+function _resolveVideoFile(filePath) {
+  if (fs.existsSync(filePath)) return filePath;
+  try {
+    const dir = path.dirname(filePath);
+    const base = path.basename(filePath, path.extname(filePath));
+    const files = fs.readdirSync(dir);
+    const match = files.find(
+      (f) => path.basename(f, path.extname(f)) === base &&
+             SUPPORTED_VIDEO_EXTS.includes(path.extname(f).toLowerCase())
+    );
+    if (match) return path.join(dir, match);
+  } catch (err) {
+    logger.debug('_resolveVideoFile: directory scan failed', { filePath, err: err.message });
+  }
+  return filePath;
+}
+
 ipcMain.handle('shell:openFile', (_e, filePath) => {
-  shell.openPath(filePath);
+  const resolved = _resolveVideoFile(filePath);
+  return shell.openPath(resolved);
 });
 ipcMain.handle('shell:showInFolder', (_e, filePath) => {
   shell.showItemInFolder(filePath);
 });
 
-ipcMain.handle('open-file', (_e, filePath) => shell.openPath(filePath));
+ipcMain.handle('open-file', (_e, filePath) => {
+  const resolved = _resolveVideoFile(filePath);
+  return shell.openPath(resolved);
+});
 ipcMain.handle('open-folder', (_e, filePath) => shell.showItemInFolder(filePath));
 
 ipcMain.handle('dialog:selectFolder', async () => {
