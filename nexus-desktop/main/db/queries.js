@@ -24,6 +24,8 @@ function getStatements() {
     getPendingDownloads:     db.prepare(`SELECT * FROM downloads WHERE status IN ('pending','queued') ORDER BY priority DESC, created_at ASC LIMIT ?`),
 
     updateDownloadProgress:  db.prepare(`UPDATE downloads SET downloaded=@downloaded, speed=@speed, progress=@progress, eta=@eta, updated_at=datetime('now') WHERE id=@id`),
+    updateYtdlpProgress:     db.prepare(`UPDATE downloads SET file_size=@file_size, downloaded=@downloaded, speed=@speed, progress=@progress, updated_at=datetime('now') WHERE id=@id`),
+    updateDownloadFinalSize: db.prepare(`UPDATE downloads SET file_size=@file_size, downloaded=@downloaded, updated_at=datetime('now') WHERE id=@id`),
     updateDownloadStatus:    db.prepare(`UPDATE downloads SET status=@status, updated_at=datetime('now') WHERE id=@id`),
     updateDownloadStarted:   db.prepare(`UPDATE downloads SET status='downloading', started_at=datetime('now'), updated_at=datetime('now') WHERE id=@id`),
     updateDownloadCompleted: db.prepare(`UPDATE downloads SET status='completed', progress=100, finished_at=datetime('now'), updated_at=datetime('now') WHERE id=@id`),
