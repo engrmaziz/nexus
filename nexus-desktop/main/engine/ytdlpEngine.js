@@ -240,7 +240,12 @@ async function downloadVideo(url, quality, outputPath, onProgress, opts = {}) {
 
   args.push(url);
 
-  await runYtdlp(args, { onProgress, signal: opts.signal, onProc: opts.onProc });
+  await runYtdlp(args, {
+    onProgress,
+    onStdoutLine: opts.onStdoutLine,
+    signal: opts.signal,
+    onProc: opts.onProc,
+  });
   return outputPath;
 }
 
@@ -486,14 +491,34 @@ class YtdlpEngine extends EventEmitter {
       this.emit('progress', { percent: 0, title: realTitle, speed: '0', eta: '--' });
     }
 
-    const outputPath = path.join(this.outputDir, this.outputTemplate);
+    const outputDir = this.outputDir;
+    const outputTemplate = path.join(outputDir, '%(title)s.%(ext)s');
     const quality = this.quality || 'best';
+
+    // Patterns to capture the actual output filename from yt-dlp stdout
+    const MERGER_RE      = /\[Merger\] Merging formats into "(.+)"$/;
+    const DESTINATION_RE = /\[download\] Destination: (.+)$/;
+    const FFMPEG_RE      = /\[ffmpeg\] .+ in (.+\.\w{2,6})$/;
+
+    let resolvedFilename = null;
+
+    const onStdoutLine = (line) => {
+      const l = line.trim();
+      let m;
+      if ((m = MERGER_RE.exec(l))) {
+        resolvedFilename = m[1];
+      } else if ((m = DESTINATION_RE.exec(l))) {
+        resolvedFilename = m[1];
+      } else if ((m = FFMPEG_RE.exec(l))) {
+        resolvedFilename = m[1];
+      }
+    };
 
     try {
       await downloadVideo(
         this.url,
         quality,
-        outputPath,
+        outputTemplate,
         (p) => this.emit('progress', p),
         {
           cookies: this.cookies,
@@ -501,9 +526,34 @@ class YtdlpEngine extends EventEmitter {
           rateLimit: this.rateLimit,
           signal: this._controller.signal,
           onProc: (proc) => { this._proc = proc; },
+          onStdoutLine,
         }
       );
-      this.emit('complete', { outputPath });
+
+      // If no filename was captured from stdout, scan outputDir for the newest video file
+      if (!resolvedFilename) {
+        try {
+          const files = fs.readdirSync(outputDir)
+            .filter((f) => ['.mp4', '.mkv', '.webm'].includes(path.extname(f).toLowerCase()))
+            .map((f) => ({ f, t: fs.statSync(path.join(outputDir, f)).mtimeMs }))
+            .sort((a, b) => b.t - a.t);
+          if (files.length > 0) {
+            resolvedFilename = files[0].f;
+          }
+        } catch (scanErr) {
+          logger.debug('ytdlpEngine: directory scan for output file failed', { err: scanErr.message });
+        }
+      }
+
+      if (resolvedFilename) {
+        // Ensure it is an absolute path
+        const realFilePath = path.isAbsolute(resolvedFilename)
+          ? resolvedFilename
+          : path.join(outputDir, resolvedFilename);
+        this.emit('filename', realFilePath);
+      }
+
+      this.emit('complete', { outputPath: outputTemplate });
     } catch (err) {
       this.emit('error', err);
       throw err;

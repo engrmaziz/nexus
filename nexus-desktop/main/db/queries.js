@@ -31,6 +31,7 @@ function getStatements() {
     updateDownloadTitle:     db.prepare(`UPDATE downloads SET title=@title, filename=@title, updated_at=datetime('now') WHERE id=@id`),
     updateDownloadChunks:    db.prepare(`UPDATE downloads SET chunks=@chunks, updated_at=datetime('now') WHERE id=@id`),
     updateDownloadFileInfo:  db.prepare(`UPDATE downloads SET file_size=@file_size, filename=@filename, mime_type=@mime_type, updated_at=datetime('now') WHERE id=@id`),
+    updateDownloadFilePath:  db.prepare(`UPDATE downloads SET file_path=@file_path, updated_at=datetime('now') WHERE id=@id`),
     incrementRetries:        db.prepare(`UPDATE downloads SET retries=retries+1, updated_at=datetime('now') WHERE id=?`),
     deleteDownload:          db.prepare(`DELETE FROM downloads WHERE id=?`),
 

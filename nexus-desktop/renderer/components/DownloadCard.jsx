@@ -64,6 +64,7 @@ function DownloadCard({ download, onAction }) {
     id,
     title,
     filename,
+    file_path,
     status = 'queued',
     progress = 0,
     downloaded = 0,
@@ -96,7 +97,8 @@ function DownloadCard({ download, onAction }) {
     return { color: 'var(--text-2)' };
   }
 
-  const filePath = save_path && filename ? `${save_path}/${filename}` : (save_path || filename || '');
+  // Use the stored file_path from DB when available; fall back to save_path + filename
+  const filePath = file_path || (save_path && filename ? `${save_path}/${filename}` : (save_path || filename || ''));
 
   return (
     <div

@@ -652,6 +652,26 @@ class DownloadManager extends EventEmitter {
         this.emit('update', dl.id, { title });
       });
 
+      engine.on('filename', (filePath) => {
+        let actualSize = 0;
+        try { actualSize = fs.statSync(filePath).size; } catch (_) {}
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeTypes = { '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm' };
+        const mimeType = mimeTypes[ext] || 'video/mp4';
+        q.updateDownloadFileInfo.run({
+          id: dl.id,
+          filename: path.basename(filePath),
+          file_size: actualSize,
+          mime_type: mimeType,
+        });
+        q.updateDownloadFilePath.run({ id: dl.id, file_path: filePath });
+        this.emit('update', dl.id, {
+          title: path.basename(filePath, path.extname(filePath)),
+          filename: path.basename(filePath),
+          file_path: filePath,
+        });
+      });
+
       engine.on('progress', (p) => {
         const progress  = Math.min(100, p.percent || 0);
         const speedBytes = _parseSpeedToBytes(p.speed);
