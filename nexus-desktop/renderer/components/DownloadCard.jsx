@@ -97,8 +97,8 @@ function DownloadCard({ download, onAction }) {
     return { color: 'var(--text-2)' };
   }
 
-  // Use the stored file_path from DB when available; fall back to save_path + filename
-  const filePath = file_path || (save_path && filename ? `${save_path}/${filename}` : (save_path || filename || ''));
+  // Use the stored file_path from DB directly; fall back to save_path for older records without file_path
+  const filePath = file_path || save_path || '';
 
   return (
     <div
