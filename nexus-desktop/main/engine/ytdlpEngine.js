@@ -241,11 +241,6 @@ async function downloadVideo(url, quality, outputPath, onProgress, opts = {}) {
     '-o', outputPath,
     '--newline',
     '--no-part',
-    '--write-subs',
-    '--sub-langs', 'en,auto',
-    '--embed-subs',
-    '--write-thumbnail',
-    '--embed-thumbnail',
     '--retries', '5',
     '--fragment-retries', '5',
   ];
