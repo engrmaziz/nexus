@@ -214,10 +214,10 @@ class _SqlJsStatement {
     this._stmt = null;
   }
 
-  _open() {
-    if (!this._stmt) this._stmt = this._db.prepare(this._sql);
-    return this._stmt;
-  }
+_open() {
+  this._stmt = this._db.prepare(this._sql);
+  return this._stmt;
+}
 
   run(...args) {
     const stmt = this._open();

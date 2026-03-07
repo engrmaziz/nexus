@@ -226,7 +226,7 @@ app.post('/api/download', async (req, res) => {
 
     res.json({ success: true, downloadId, message: 'Download queued' });
   } catch (err) {
-    logger.error('POST /api/download failed', err.message, err.stack);
+    logger.error('POST /api/download failed', { msg: err.message, stack: err.stack });
     res.status(500).json({ error: _friendlyError(err) });
   }
 });

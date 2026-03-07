@@ -1,0 +1,366 @@
+{
+  "url": "https://releases.ubuntu.com/24.04.4/ubuntu-24.04.4-desktop-amd64.iso",
+  "finalUrl": "https://releases.ubuntu.com/24.04.4/ubuntu-24.04.4-desktop-amd64.iso",
+  "fileSize": 6655619072,
+  "chunkCount": 44,
+  "chunks": [
+    {
+      "index": 0,
+      "start": 0,
+      "end": 103994047,
+      "downloaded": 159856,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_0"
+    },
+    {
+      "index": 1,
+      "start": 207988096,
+      "end": 415976191,
+      "downloaded": 463848,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_1"
+    },
+    {
+      "index": 2,
+      "start": 415976192,
+      "end": 416788645,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_2"
+    },
+    {
+      "index": 3,
+      "start": 623964288,
+      "end": 649962799,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_3"
+    },
+    {
+      "index": 4,
+      "start": 831952384,
+      "end": 1039940479,
+      "downloaded": 527847,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_4"
+    },
+    {
+      "index": 5,
+      "start": 1039940480,
+      "end": 1247928575,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_5"
+    },
+    {
+      "index": 6,
+      "start": 1247928576,
+      "end": 1455916671,
+      "downloaded": 959846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_6"
+    },
+    {
+      "index": 7,
+      "start": 1455916672,
+      "end": 1663904767,
+      "downloaded": 1135846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_7"
+    },
+    {
+      "index": 8,
+      "start": 1663904768,
+      "end": 1871892863,
+      "downloaded": 1175846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_8"
+    },
+    {
+      "index": 9,
+      "start": 1871892864,
+      "end": 2079880959,
+      "downloaded": 119846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_9"
+    },
+    {
+      "index": 10,
+      "start": 2079880960,
+      "end": 2287869055,
+      "downloaded": 1135846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_10"
+    },
+    {
+      "index": 11,
+      "start": 2287869056,
+      "end": 2495857151,
+      "downloaded": 15846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_11"
+    },
+    {
+      "index": 12,
+      "start": 2495857152,
+      "end": 2703845247,
+      "downloaded": 423846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_12"
+    },
+    {
+      "index": 13,
+      "start": 2703845248,
+      "end": 2911833343,
+      "downloaded": 7846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_13"
+    },
+    {
+      "index": 14,
+      "start": 2911833344,
+      "end": 3119821439,
+      "downloaded": 775846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_14"
+    },
+    {
+      "index": 15,
+      "start": 3119821440,
+      "end": 3327809535,
+      "downloaded": 247846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_15"
+    },
+    {
+      "index": 16,
+      "start": 3327809536,
+      "end": 3535797631,
+      "downloaded": 927846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_16"
+    },
+    {
+      "index": 17,
+      "start": 3535797632,
+      "end": 3743785727,
+      "downloaded": 111846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_17"
+    },
+    {
+      "index": 18,
+      "start": 3743785728,
+      "end": 3951773823,
+      "downloaded": 951846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_18"
+    },
+    {
+      "index": 19,
+      "start": 3951773824,
+      "end": 4159761919,
+      "downloaded": 1215846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_19"
+    },
+    {
+      "index": 20,
+      "start": 4159761920,
+      "end": 4367750015,
+      "downloaded": 151846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_20"
+    },
+    {
+      "index": 21,
+      "start": 4367750016,
+      "end": 4575738111,
+      "downloaded": 1015846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_21"
+    },
+    {
+      "index": 22,
+      "start": 4575738112,
+      "end": 4783726207,
+      "downloaded": 63846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_22"
+    },
+    {
+      "index": 23,
+      "start": 4783726208,
+      "end": 4991714303,
+      "downloaded": 679846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_23"
+    },
+    {
+      "index": 24,
+      "start": 4991714304,
+      "end": 5199702399,
+      "downloaded": 119846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_24"
+    },
+    {
+      "index": 25,
+      "start": 5199702400,
+      "end": 5407690495,
+      "downloaded": 551846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_25"
+    },
+    {
+      "index": 26,
+      "start": 5407690496,
+      "end": 5615678591,
+      "downloaded": 79846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_26"
+    },
+    {
+      "index": 27,
+      "start": 5615678592,
+      "end": 5823666687,
+      "downloaded": 111846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_27"
+    },
+    {
+      "index": 28,
+      "start": 5823666688,
+      "end": 6031654783,
+      "downloaded": 1279846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_28"
+    },
+    {
+      "index": 29,
+      "start": 6031654784,
+      "end": 6239642879,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_29"
+    },
+    {
+      "index": 30,
+      "start": 6239642880,
+      "end": 6447630975,
+      "downloaded": 1031846,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_30"
+    },
+    {
+      "index": 31,
+      "start": 6447630976,
+      "end": 6655619071,
+      "downloaded": 55538,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_31"
+    },
+    {
+      "index": 32,
+      "start": 103994048,
+      "end": 207988095,
+      "downloaded": 47848,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_32"
+    },
+    {
+      "index": 33,
+      "start": 519970240,
+      "end": 623964287,
+      "downloaded": 175848,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_33"
+    },
+    {
+      "index": 34,
+      "start": 467973216,
+      "end": 519970239,
+      "downloaded": 1079849,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_34"
+    },
+    {
+      "index": 35,
+      "start": 441974704,
+      "end": 467973215,
+      "downloaded": 23849,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_35"
+    },
+    {
+      "index": 36,
+      "start": 428975448,
+      "end": 441974703,
+      "downloaded": 103849,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_36"
+    },
+    {
+      "index": 37,
+      "start": 422475820,
+      "end": 428975447,
+      "downloaded": 47850,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_37"
+    },
+    {
+      "index": 38,
+      "start": 419226006,
+      "end": 422475819,
+      "downloaded": 351850,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_38"
+    },
+    {
+      "index": 39,
+      "start": 417601099,
+      "end": 419226005,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_39"
+    },
+    {
+      "index": 40,
+      "start": 416788646,
+      "end": 417601098,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_40"
+    },
+    {
+      "index": 41,
+      "start": 727958336,
+      "end": 831952383,
+      "downloaded": 39848,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_41"
+    },
+    {
+      "index": 42,
+      "start": 675961312,
+      "end": 727958335,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_42"
+    },
+    {
+      "index": 43,
+      "start": 649962800,
+      "end": 675961311,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Other\\other\\Thank_you_for_downloading_Ubuntu_Desktop_Ubuntu.part_43"
+    }
+  ],
+  "headers": {
+    "cookie": "",
+    "etag": "\"18cb4b000-64a6e5a83867c\"",
+    "lastModified": "Tue, 10 Feb 2026 01:41:25 GMT"
+  },
+  "savedAt": 1772905282011
+}

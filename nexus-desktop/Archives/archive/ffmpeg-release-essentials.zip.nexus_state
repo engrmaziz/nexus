@@ -1,0 +1,238 @@
+{
+  "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+  "finalUrl": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.0.1-essentials_build.zip",
+  "fileSize": 106259850,
+  "chunkCount": 28,
+  "chunks": [
+    {
+      "index": 0,
+      "start": 0,
+      "end": 553436,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_0"
+    },
+    {
+      "index": 1,
+      "start": 4427493,
+      "end": 8854985,
+      "downloaded": 7842,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_1"
+    },
+    {
+      "index": 2,
+      "start": 8854986,
+      "end": 11068732,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_2"
+    },
+    {
+      "index": 3,
+      "start": 13282479,
+      "end": 17709971,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_3"
+    },
+    {
+      "index": 4,
+      "start": 17709972,
+      "end": 22137464,
+      "downloaded": 56992,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_4"
+    },
+    {
+      "index": 5,
+      "start": 22137465,
+      "end": 26564957,
+      "downloaded": 106144,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_5"
+    },
+    {
+      "index": 6,
+      "start": 26564958,
+      "end": 30992450,
+      "downloaded": 40608,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_6"
+    },
+    {
+      "index": 7,
+      "start": 30992451,
+      "end": 35419943,
+      "downloaded": 56992,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_7"
+    },
+    {
+      "index": 8,
+      "start": 35419944,
+      "end": 39847436,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_8"
+    },
+    {
+      "index": 9,
+      "start": 39847437,
+      "end": 44274929,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_9"
+    },
+    {
+      "index": 10,
+      "start": 44274930,
+      "end": 48702422,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_10"
+    },
+    {
+      "index": 11,
+      "start": 48702423,
+      "end": 53129915,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_11"
+    },
+    {
+      "index": 12,
+      "start": 53129916,
+      "end": 57557408,
+      "downloaded": 40608,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_12"
+    },
+    {
+      "index": 13,
+      "start": 57557409,
+      "end": 61984901,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_13"
+    },
+    {
+      "index": 14,
+      "start": 61984902,
+      "end": 66412394,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_14"
+    },
+    {
+      "index": 15,
+      "start": 66412395,
+      "end": 70839887,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_15"
+    },
+    {
+      "index": 16,
+      "start": 70839888,
+      "end": 75267380,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_16"
+    },
+    {
+      "index": 17,
+      "start": 75267381,
+      "end": 79694873,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_17"
+    },
+    {
+      "index": 18,
+      "start": 79694874,
+      "end": 84122366,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_18"
+    },
+    {
+      "index": 19,
+      "start": 84122367,
+      "end": 88549859,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_19"
+    },
+    {
+      "index": 20,
+      "start": 88549860,
+      "end": 92977352,
+      "downloaded": 7840,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_20"
+    },
+    {
+      "index": 21,
+      "start": 92977353,
+      "end": 97404845,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_21"
+    },
+    {
+      "index": 22,
+      "start": 97404846,
+      "end": 101832338,
+      "downloaded": 7839,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_22"
+    },
+    {
+      "index": 23,
+      "start": 101832339,
+      "end": 106259849,
+      "downloaded": 89758,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_23"
+    },
+    {
+      "index": 24,
+      "start": 2213747,
+      "end": 4427492,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_24"
+    },
+    {
+      "index": 25,
+      "start": 1106874,
+      "end": 2213746,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_25"
+    },
+    {
+      "index": 26,
+      "start": 553437,
+      "end": 1106873,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_26"
+    },
+    {
+      "index": 27,
+      "start": 11068733,
+      "end": 13282478,
+      "downloaded": 0,
+      "complete": false,
+      "tempFile": "Archives\\archive\\ffmpeg-release-essentials.zip.part_27"
+    }
+  ],
+  "headers": {
+    "cookie": "",
+    "etag": "\"655658a-6440035595680\"",
+    "lastModified": "Thu, 20 Nov 2025 05:45:46 GMT"
+  },
+  "savedAt": 1772903038098
+}
